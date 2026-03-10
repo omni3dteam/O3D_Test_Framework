@@ -21,6 +21,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+          token: ${{secrets.OMNI3D_CI }}
 
       - name: Update triggered submodule to pushed commit
         run: |

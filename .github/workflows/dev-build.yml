@@ -1,0 +1,43 @@
+# .github/workflows/dev-build.yml
+
+name: Dev Build
+
+on:
+  repository_dispatch:
+    types: [submodule-updated]
+
+jobs:
+  build-and-test:
+    runs-on: [self-hosted, test-server]
+
+    env:
+      SUBMODULE: ${{ github.event.client_payload.submodule }}
+      SHA:       ${{ github.event.client_payload.sha }}
+      PUSHER:    ${{ github.event.client_payload.pusher }}
+
+    steps:
+      - name: Checkout omni3d-ci
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Update triggered submodule to pushed commit
+        run: |
+          echo "Triggered by $PUSHER pushing to $SUBMODULE"
+          cd "$SUBMODULE"
+          git fetch origin dev
+          git checkout "$SHA"
+
+      - name: Run unit tests
+        run: |
+          python3 -m pytest "$SUBMODULE/tests/" -v --rootdir="$SUBMODULE"
+
+      - name: Run integration tests
+        run: |
+          python3 -m pytest tests/integration/ -v
+
+      - name: Report status
+        if: always()
+        run: |
+          echo "Build ${{ job.status }} for $SUBMODULE @ $SHA pushed by $PUSHER"

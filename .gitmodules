@@ -1,0 +1,3 @@
+[submodule "OMNI3D_Template"]
+	path = OMNI3D_Template
+	url = git@github.com:omni3dteam/OMNI3D_Template.git

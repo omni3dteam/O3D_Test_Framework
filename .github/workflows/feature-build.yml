@@ -9,104 +9,111 @@ jobs:
     runs-on: [self-hosted, test-server]
 
     env:
-      SUBMODULE: ${{ github.event.client_payload.submodule }}
-      SHA:       ${{ github.event.client_payload.sha }}
-      PUSHER:    ${{ github.event.client_payload.pusher }}
-      REF:       ${{ github.event.client_payload.ref }}
+      SUBMODULE:      ${{ github.event.client_payload.submodule }}
+      SHA:            ${{ github.event.client_payload.sha }}
+      PUSHER:         ${{ github.event.client_payload.pusher }}
+      REF:            ${{ github.event.client_payload.ref }}
+      TEST_IMAGE:     omni3d-stack:ci-test-${{ github.event.client_payload.sha }}
+      TEST_CONTAINER: omni3d-ci-test
 
     steps:
 
-      # ── checkout ────────────────────────────────────────────────────────────
-      - name: Checkout O3D_Test_Framework + submodules
+      # ── S1: checkout ──────────────────────────────────────────────────────────
+      - name: S1 — Checkout O3D_Test_Framework + submodules
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
           token: ${{ secrets.OMNI3D_CI }}
 
-      - name: Update ${{ env.SUBMODULE }} to pushed commit
+      - name: S1 — Update triggered submodule to pushed commit
         run: |
           cd "$SUBMODULE"
           git fetch origin
           git checkout "$SHA"
-          echo "── $SUBMODULE checked out at $SHA ──"
+          echo "── $SUBMODULE at $SHA ──"
+          git log -1 --oneline
 
-      # ── S1: unit tests ───────────────────────────────────────────────────────
-      - name: S1 — Unit tests
+      # ── S2: unit tests ────────────────────────────────────────────────────────
+      - name: S2 — Unit tests
         run: |
           cd "$SUBMODULE"
           if [ -d "tests" ]; then
-            echo "── Running pytest for $SUBMODULE ──"
+            echo "── Running pytest ──"
             python3 -m pytest tests/ -v
           else
-            echo "── No tests/ directory found in $SUBMODULE, skipping ──"
+            echo "── No tests/ directory, skipping ──"
           fi
 
-      # ── S2: PyInstaller build ────────────────────────────────────────────────
-      - name: S2 — Build binary with PyInstaller
+      # ── S3: build Docker image ────────────────────────────────────────────────
+      - name: S3 — Build Docker image
         run: |
-          cd "$SUBMODULE"
+          echo "── Building $TEST_IMAGE ──"
+          docker build \
+            -f omni3d-container/Dockerfile \
+            -t "$TEST_IMAGE" \
+            .
+          echo "── Build complete ──"
 
-          # find the entry point — first .py file in src/
-          ENTRY=$(ls src/*.py | grep -v __pycache__ | head -1)
-          BINARY=$(basename "$ENTRY" .py)
-          echo "Entry point: $ENTRY"
-          echo "Binary name: $BINARY"
-
-          # write to env for next steps
-          echo "BINARY=$BINARY" >> $GITHUB_ENV
-          echo "SUBMODULE_PATH=$(pwd)" >> $GITHUB_ENV
-
-          pip install -r ../omni3d-container/requirements.txt --quiet
-          pyinstaller "$ENTRY" --onedir -y
-
-          echo "── Build complete: dist/$BINARY ──"
-          ls dist/$BINARY/
-
-      # ── S3: smoke test ───────────────────────────────────────────────────────
-      - name: S3 — Smoke test binary
+      # ── S4: run test container ────────────────────────────────────────────────
+      - name: S4 — Start test container
         run: |
-          cd "$SUBMODULE_PATH"
-          BINARY_PATH="dist/$BINARY/$BINARY"
+          docker rm -f "$TEST_CONTAINER" 2>/dev/null || true
 
-          echo "── Starting $BINARY ──"
-          ./$BINARY_PATH &
-          BIN_PID=$!
-          echo "PID: $BIN_PID"
+          echo "── Starting $TEST_CONTAINER ──"
+          docker run -d \
+            --name "$TEST_CONTAINER" \
+            -v /var/run/dsf:/var/run/dsf \
+            -v /run/omni3d:/run/omni3d \
+            -v /opt/dsf/sd/timelaps:/opt/dsf/sd/timelaps \
+            -v /opt/dsf/timelaps:/opt/dsf/timelaps \
+            -v /opt/omni3d/config:/app/config \
+            --add-host host-gateway:host-gateway \
+            --group-add 992 \
+            "$TEST_IMAGE"
 
-          # wait 5 seconds then check if still running
-          sleep 5
+      # ── S5: integration test ──────────────────────────────────────────────────
+      - name: S5 — Wait for services to be RUNNING
+        run: |
+          echo "── Waiting 10 seconds for services to initialise ──"
+          sleep 10
 
-          if kill -0 $BIN_PID 2>/dev/null; then
-            echo "✓ Binary is still running after 5s"
-          else
-            echo "✗ Binary crashed within 5 seconds"
+          echo "── Checking supervisorctl status ──"
+          docker exec "$TEST_CONTAINER" supervisorctl status
+
+          FAILED=0
+          while IFS= read -r line; do
+            NAME=$(echo "$line" | awk '{print $1}')
+            STATE=$(echo "$line" | awk '{print $2}')
+            if [ "$STATE" != "RUNNING" ]; then
+              echo "✗ $NAME is $STATE — expected RUNNING"
+              FAILED=1
+            else
+              echo "✓ $NAME is RUNNING"
+            fi
+          done < <(docker exec "$TEST_CONTAINER" supervisorctl status)
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo "── Dumping service logs ──"
+            docker exec "$TEST_CONTAINER" cat /var/log/supervisord.log
             exit 1
           fi
 
-          # check DSF is reachable from this process
-          echo "── Checking DSF connection ──"
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-            http://localhost/machine/model --max-time 5 || echo "000")
+          echo "── All services RUNNING — integration test passed ──"
 
-          if [ "$HTTP_CODE" = "200" ]; then
-            echo "✓ DSF HTTP API responding (200)"
-          else
-            echo "✗ DSF HTTP API not responding (got: $HTTP_CODE)"
-            kill $BIN_PID 2>/dev/null || true
-            exit 1
-          fi
+      # ── cleanup: always runs ──────────────────────────────────────────────────
+      - name: Cleanup — Stop and remove test container
+        if: always()
+        run: |
+          echo "── Cleaning up ──"
+          docker stop "$TEST_CONTAINER" 2>/dev/null || true
+          docker rm   "$TEST_CONTAINER" 2>/dev/null || true
+          docker rmi  "$TEST_IMAGE"     2>/dev/null || true
+          echo "── Production container untouched ──"
 
-          # clean up
-          echo "── Stopping binary ──"
-          kill $BIN_PID 2>/dev/null || true
-          wait $BIN_PID 2>/dev/null || true
-          echo "✓ Smoke test passed"
-
-      # ── notify on failure ────────────────────────────────────────────────────
+      # ── notify on failure ─────────────────────────────────────────────────────
       - name: Notify failure
         if: failure()
         run: |
           echo "Pipeline failed for $SUBMODULE @ $SHA pushed by $PUSHER"
           echo "Branch: $REF"
-          # add Slack/email notification here when ready

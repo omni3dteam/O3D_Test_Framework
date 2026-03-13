@@ -1,0 +1,112 @@
+name: Feature Build
+
+on:
+  repository_dispatch:
+    types: [submodule-updated]
+
+jobs:
+  build-and-test:
+    runs-on: [self-hosted, test-server]
+
+    env:
+      SUBMODULE: ${{ github.event.client_payload.submodule }}
+      SHA:       ${{ github.event.client_payload.sha }}
+      PUSHER:    ${{ github.event.client_payload.pusher }}
+      REF:       ${{ github.event.client_payload.ref }}
+
+    steps:
+
+      # ── checkout ────────────────────────────────────────────────────────────
+      - name: Checkout O3D_Test_Framework + submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          token: ${{ secrets.OMNI3D_CI }}
+
+      - name: Update ${{ env.SUBMODULE }} to pushed commit
+        run: |
+          cd "$SUBMODULE"
+          git fetch origin
+          git checkout "$SHA"
+          echo "── $SUBMODULE checked out at $SHA ──"
+
+      # ── S1: unit tests ───────────────────────────────────────────────────────
+      - name: S1 — Unit tests
+        run: |
+          cd "$SUBMODULE"
+          if [ -d "tests" ]; then
+            echo "── Running pytest for $SUBMODULE ──"
+            python3 -m pytest tests/ -v
+          else
+            echo "── No tests/ directory found in $SUBMODULE, skipping ──"
+          fi
+
+      # ── S2: PyInstaller build ────────────────────────────────────────────────
+      - name: S2 — Build binary with PyInstaller
+        run: |
+          cd "$SUBMODULE"
+
+          # find the entry point — first .py file in src/
+          ENTRY=$(ls src/*.py | grep -v __pycache__ | head -1)
+          BINARY=$(basename "$ENTRY" .py)
+          echo "Entry point: $ENTRY"
+          echo "Binary name: $BINARY"
+
+          # write to env for next steps
+          echo "BINARY=$BINARY" >> $GITHUB_ENV
+          echo "SUBMODULE_PATH=$(pwd)" >> $GITHUB_ENV
+
+          pip install -r ../omni3d-container/requirements.txt --quiet
+          pyinstaller "$ENTRY" --onedir -y
+
+          echo "── Build complete: dist/$BINARY ──"
+          ls dist/$BINARY/
+
+      # ── S3: smoke test ───────────────────────────────────────────────────────
+      - name: S3 — Smoke test binary
+        run: |
+          cd "$SUBMODULE_PATH"
+          BINARY_PATH="dist/$BINARY/$BINARY"
+
+          echo "── Starting $BINARY ──"
+          ./$BINARY_PATH &
+          BIN_PID=$!
+          echo "PID: $BIN_PID"
+
+          # wait 5 seconds then check if still running
+          sleep 5
+
+          if kill -0 $BIN_PID 2>/dev/null; then
+            echo "✓ Binary is still running after 5s"
+          else
+            echo "✗ Binary crashed within 5 seconds"
+            exit 1
+          fi
+
+          # check DSF is reachable from this process
+          echo "── Checking DSF connection ──"
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            http://localhost/machine/model --max-time 5 || echo "000")
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "✓ DSF HTTP API responding (200)"
+          else
+            echo "✗ DSF HTTP API not responding (got: $HTTP_CODE)"
+            kill $BIN_PID 2>/dev/null || true
+            exit 1
+          fi
+
+          # clean up
+          echo "── Stopping binary ──"
+          kill $BIN_PID 2>/dev/null || true
+          wait $BIN_PID 2>/dev/null || true
+          echo "✓ Smoke test passed"
+
+      # ── notify on failure ────────────────────────────────────────────────────
+      - name: Notify failure
+        if: failure()
+        run: |
+          echo "Pipeline failed for $SUBMODULE @ $SHA pushed by $PUSHER"
+          echo "Branch: $REF"
+          # add Slack/email notification here when ready

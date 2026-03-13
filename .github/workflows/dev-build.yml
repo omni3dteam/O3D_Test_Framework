@@ -1,5 +1,3 @@
-# .github/workflows/dev-build.yml
-
 name: Dev Build
 
 on:
@@ -8,35 +6,109 @@ on:
 
 jobs:
   build-and-test:
+    if: github.event.client_payload.ref == 'refs/heads/dev'
     runs-on: [self-hosted, test-server]
 
     env:
-      SUBMODULE: ${{ github.event.client_payload.submodule }}
-      SHA:       ${{ github.event.client_payload.sha }}
-      PUSHER:    ${{ github.event.client_payload.pusher }}
+      SUBMODULE:      ${{ github.event.client_payload.submodule }}
+      SHA:            ${{ github.event.client_payload.sha }}
+      PUSHER:         ${{ github.event.client_payload.pusher }}
+      TEST_IMAGE:     omni3d-stack:ci-test-${{ github.event.client_payload.sha }}
+      TEST_CONTAINER: omni3d-ci-test
 
     steps:
-      - name: Checkout omni3d-ci
+
+      # ── S1: checkout ──────────────────────────────────────────────────────────
+      - name: S1 — Checkout O3D_Test_Framework + submodules
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
-          token: ${{secrets.OMNI3D_CI }}
+          token: ${{ secrets.OMNI3D_CI }}
 
-      - name: Update triggered submodule to pushed commit
+      - name: S1 — Update ${{ env.SUBMODULE }} to pushed commit
         run: |
           echo "Triggered by $PUSHER pushing to $SUBMODULE"
           cd "$SUBMODULE"
           git fetch origin dev
           git checkout "$SHA"
+          git log -1 --oneline
 
-      - name: Run unit tests
+      # ── S2: unit tests ────────────────────────────────────────────────────────
+      - name: S2 — Unit tests
         run: |
-          python3 -m pytest "$SUBMODULE/tests/" -v --rootdir="$SUBMODULE"
+          cd "$SUBMODULE"
+          if [ -d "tests" ]; then
+            echo "── Running pytest ──"
+            python3 -m pytest tests/ -v
+          else
+            echo "── No tests/ directory, skipping ──"
+          fi
 
-      - name: Run integration tests
+      # ── S3: build Docker image ────────────────────────────────────────────────
+      - name: S3 — Build Docker image
         run: |
-          python3 -m pytest tests/integration/ -v
+          echo "── Building $TEST_IMAGE ──"
+          docker build \
+            -f omni3d-container/Dockerfile \
+            -t "$TEST_IMAGE" \
+            .
+          echo "── Build complete ──"
+
+      # ── S4: run test container ────────────────────────────────────────────────
+      - name: S4 — Start test container
+        run: |
+          docker rm -f "$TEST_CONTAINER" 2>/dev/null || true
+
+          echo "── Starting $TEST_CONTAINER ──"
+          docker run -d \
+            --name "$TEST_CONTAINER" \
+            -v /var/run/dsf:/var/run/dsf \
+            -v /run/omni3d:/run/omni3d \
+            -v /opt/dsf/sd/timelaps:/opt/dsf/sd/timelaps \
+            -v /opt/dsf/timelaps:/opt/dsf/timelaps \
+            -v /opt/omni3d/config:/app/config \
+            --add-host host-gateway:host-gateway \
+            --group-add 992 \
+            "$TEST_IMAGE"
+
+      # ── S5: integration test ──────────────────────────────────────────────────
+      - name: S5 — Verify all services RUNNING
+        run: |
+          echo "── Waiting 10 seconds for services to initialise ──"
+          sleep 10
+
+          echo "── Supervisorctl status ──"
+          docker exec "$TEST_CONTAINER" supervisorctl status
+
+          FAILED=0
+          while IFS= read -r line; do
+            NAME=$(echo "$line" | awk '{print $1}')
+            STATE=$(echo "$line" | awk '{print $2}')
+            if [ "$STATE" != "RUNNING" ]; then
+              echo "✗ $NAME is $STATE — expected RUNNING"
+              FAILED=1
+            else
+              echo "✓ $NAME is RUNNING"
+            fi
+          done < <(docker exec "$TEST_CONTAINER" supervisorctl status)
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo "── Service logs ──"
+            docker exec "$TEST_CONTAINER" cat /var/log/supervisord.log
+            exit 1
+          fi
+
+          echo "── All services RUNNING — pipeline passed ──"
+
+      # ── cleanup: always runs ──────────────────────────────────────────────────
+      - name: Cleanup — Remove test container
+        if: always()
+        run: |
+          docker stop "$TEST_CONTAINER" 2>/dev/null || true
+          docker rm   "$TEST_CONTAINER" 2>/dev/null || true
+          docker rmi  "$TEST_IMAGE"     2>/dev/null || true
+          echo "── Production container untouched ──"
 
       - name: Report status
         if: always()

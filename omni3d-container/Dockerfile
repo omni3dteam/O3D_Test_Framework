@@ -1,5 +1,10 @@
 # Dockerfile
 # OMNI3D Stack — OMNI3D_Template (testing phase)
+#
+# Build order:
+#   1. Install omnode (internal library)
+#   2. Install service requirements
+#   3. Build service binary with PyInstaller
 
 FROM python:3.11-slim
 
@@ -10,12 +15,16 @@ RUN apt-get update && apt-get install -y \
     libz-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Python dependencies ───────────────────────────────────────────────────────
+# ── build and install omnode ──────────────────────────────────────────────────
+COPY OMNI3D_omnode/ /build/OMNI3D_omnode/
+RUN pip install --no-cache-dir /build/OMNI3D_omnode/
+
+# ── service dependencies ──────────────────────────────────────────────────────
 COPY omni3d-container/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt && \
     pip install --no-cache-dir pyinstaller
 
-# ── build binary ─────────────────────────────────────────────────────────────
+# ── build service binary ──────────────────────────────────────────────────────
 RUN mkdir -p /app
 WORKDIR /build
 

@@ -13,11 +13,13 @@ RUN apt-get update && apt-get install -y \
     binutils \
     supervisor \
     libz-dev \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # ── build and install omnode ──────────────────────────────────────────────────
 COPY OMNI3D_omnode/ /build/OMNI3D_omnode/
-RUN pip install --no-cache-dir /build/OMNI3D_omnode/
+RUN SETUPTOOLS_SCM_PRETEND_VERSION=0.0.1 \
+    pip install --no-cache-dir /build/OMNI3D_omnode/
 
 # ── service dependencies ──────────────────────────────────────────────────────
 COPY omni3d-container/requirements.txt /tmp/requirements.txt

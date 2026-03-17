@@ -75,6 +75,9 @@ jobs:
         run: |
           docker rm -f "$TEST_CONTAINER" 2>/dev/null || true
 
+          echo "── DSF socket on host ──"
+          ls -la /var/run/dsf/
+
           echo "── Starting $TEST_CONTAINER ──"
           docker run -d \
             --name "$TEST_CONTAINER" \
@@ -87,10 +90,15 @@ jobs:
             --group-add 992 \
             "$TEST_IMAGE"
 
+          echo "── Verify socket inside container ──"
+          sleep 2
+          docker exec "$TEST_CONTAINER" ls -la /var/run/dsf/
+          docker exec "$TEST_CONTAINER" id
+
       # ── S5: integration test ──────────────────────────────────────────────────
       - name: S5 — Verify all services RUNNING
         run: |
-          echo "── Waiting 10 seconds for services to initialise ──"
+          echo "── Waiting 20 seconds for services to initialise ──"
           sleep 20
 
           echo "── Supervisorctl status ──"

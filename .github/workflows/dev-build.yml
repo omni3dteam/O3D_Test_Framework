@@ -26,6 +26,7 @@ jobs:
       PUSHER:         ${{ github.event_name == 'workflow_dispatch' && github.actor || github.event.client_payload.pusher }}
       TEST_IMAGE:     omni3d-stack:ci-test
       TEST_CONTAINER: omni3d-ci-test
+      RELEASE_DIR:    /opt/omni3d/releases
 
     steps:
 
@@ -135,33 +136,43 @@ jobs:
           cd "$SUBMODULE/deb"
           if [ -f "build_deb.sh" ]; then
             chmod +x build_deb.sh
-            GPG_PRIVATE_KEY="${{ secrets.GPG_PRIVATE_KEY }}" \
-            GPG_PASSPHRASE="${{ secrets.GPG_PASSPHRASE }}" \
+            OMNI3D_CI="${{ secrets.OMNI3D_CI }}" \
             bash build_deb.sh
-            echo "── Deb build complete ──"
-            ls -lh *.deb || true
+            NEW_VERSION=$(cat .version 2>/dev/null || echo "1.0")
+            echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+            echo "── Deb built ──"
+            ls -lh *.deb
           else
             echo "── No build_deb.sh found, skipping ──"
           fi
 
-      # ── S7: save Docker image ─────────────────────────────────────────────────
-      - name: S7 — Save Docker image
+      # ── S7: tag and export Docker image ───────────────────────────────────────
+      - name: S7 — Tag and export Docker image
         run: |
-          echo "── Saving Docker image ──"
-          docker save "$TEST_IMAGE" | gzip > omni3d-stack.tar.gz
-          echo "── Image saved: $(du -h omni3d-stack.tar.gz | cut -f1) ──"
+          mkdir -p "$RELEASE_DIR"
 
-      # ── cleanup: always runs ──────────────────────────────────────────────────
+          docker tag "$TEST_IMAGE" "omni3d-stack:$NEW_VERSION"
+          docker tag "$TEST_IMAGE" "omni3d-stack:latest"
+          echo "── Tagged: omni3d-stack:$NEW_VERSION ──"
+
+          TAR_FILE="$RELEASE_DIR/omni3d-stack_${NEW_VERSION}.tar.gz"
+          echo "── Exporting image to $TAR_FILE ──"
+          docker save "omni3d-stack:$NEW_VERSION" | gzip > "$TAR_FILE"
+          echo "── Export complete: $(du -h $TAR_FILE | cut -f1) ──"
+          ls -lh "$RELEASE_DIR"
+
+      # ── cleanup test container only, keep the image and tar ──────────────────
       - name: Cleanup — Remove test container
         if: always()
         run: |
           docker stop "$TEST_CONTAINER" 2>/dev/null || true
           docker rm   "$TEST_CONTAINER" 2>/dev/null || true
           docker rmi  "$TEST_IMAGE"     2>/dev/null || true
-          rm -f omni3d-stack.tar.gz
-          echo "── Cleanup complete ──"
+          echo "── Test container removed ──"
+          echo "── Release image kept: omni3d-stack:$NEW_VERSION ──"
+          echo "── Release tar kept: $RELEASE_DIR/omni3d-stack_${NEW_VERSION}.tar.gz ──"
 
       - name: Report status
         if: always()
         run: |
-          echo "Build ${{ job.status }} for $SUBMODULE @ $SHA pushed by $PUSHER"
+          echo "Build ${{ job.status }} for $SUBMODULE @ $SHA v$NEW_VERSION pushed by $PUSHER"

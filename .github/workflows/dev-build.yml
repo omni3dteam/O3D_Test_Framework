@@ -21,9 +21,9 @@ jobs:
     runs-on: [self-hosted, test-server]
 
     env:
-      SUBMODULE: ${{ github.event_name == 'workflow_dispatch' && inputs.submodule || github.event.client_payload.submodule }}
-      SHA:       ${{ github.event_name == 'workflow_dispatch' && inputs.sha || github.event.client_payload.sha }}
-      PUSHER:    ${{ github.event_name == 'workflow_dispatch' && github.actor || github.event.client_payload.pusher }}
+      SUBMODULE:      ${{ github.event_name == 'workflow_dispatch' && inputs.submodule || github.event.client_payload.submodule }}
+      SHA:            ${{ github.event_name == 'workflow_dispatch' && inputs.sha || github.event.client_payload.sha }}
+      PUSHER:         ${{ github.event_name == 'workflow_dispatch' && github.actor || github.event.client_payload.pusher }}
       TEST_IMAGE:     omni3d-stack:ci-test
       TEST_CONTAINER: omni3d-ci-test
 
@@ -126,7 +126,30 @@ jobs:
             exit 1
           fi
 
-          echo "── All services RUNNING — pipeline passed ──"
+          echo "── All services RUNNING — integration test passed ──"
+
+      # ── S6: build deb package ─────────────────────────────────────────────────
+      - name: S6 — Build deb package
+        run: |
+          echo "── Building deb for $SUBMODULE ──"
+          cd "$SUBMODULE/deb"
+          if [ -f "build_deb.sh" ]; then
+            chmod +x build_deb.sh
+            GPG_PRIVATE_KEY="${{ secrets.GPG_PRIVATE_KEY }}" \
+            GPG_PASSPHRASE="${{ secrets.GPG_PASSPHRASE }}" \
+            bash build_deb.sh
+            echo "── Deb build complete ──"
+            ls -lh *.deb || true
+          else
+            echo "── No build_deb.sh found, skipping ──"
+          fi
+
+      # ── S7: save Docker image ─────────────────────────────────────────────────
+      - name: S7 — Save Docker image
+        run: |
+          echo "── Saving Docker image ──"
+          docker save "$TEST_IMAGE" | gzip > omni3d-stack.tar.gz
+          echo "── Image saved: $(du -h omni3d-stack.tar.gz | cut -f1) ──"
 
       # ── cleanup: always runs ──────────────────────────────────────────────────
       - name: Cleanup — Remove test container
@@ -135,7 +158,8 @@ jobs:
           docker stop "$TEST_CONTAINER" 2>/dev/null || true
           docker rm   "$TEST_CONTAINER" 2>/dev/null || true
           docker rmi  "$TEST_IMAGE"     2>/dev/null || true
-          echo "── Production container untouched ──"
+          rm -f omni3d-stack.tar.gz
+          echo "── Cleanup complete ──"
 
       - name: Report status
         if: always()

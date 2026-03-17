@@ -3,17 +3,28 @@ name: Dev Build
 on:
   repository_dispatch:
     types: [submodule-updated]
+  workflow_dispatch:
+    inputs:
+      submodule:
+        description: 'Submodule to test'
+        required: true
+        default: 'OMNI3D_Template'
+      sha:
+        description: 'Commit SHA (leave empty for latest dev)'
+        required: false
 
 jobs:
   build-and-test:
-    if: github.event.client_payload.ref == 'refs/heads/dev'
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.client_payload.ref == 'refs/heads/dev'
     runs-on: [self-hosted, test-server]
 
     env:
-      SUBMODULE:      ${{ github.event.client_payload.submodule }}
-      SHA:            ${{ github.event.client_payload.sha }}
-      PUSHER:         ${{ github.event.client_payload.pusher }}
-      TEST_IMAGE:     omni3d-stack:ci-test-${{ github.event.client_payload.sha }}
+      SUBMODULE: ${{ github.event_name == 'workflow_dispatch' && inputs.submodule || github.event.client_payload.submodule }}
+      SHA:       ${{ github.event_name == 'workflow_dispatch' && inputs.sha || github.event.client_payload.sha }}
+      PUSHER:    ${{ github.event_name == 'workflow_dispatch' && github.actor || github.event.client_payload.pusher }}
+      TEST_IMAGE:     omni3d-stack:ci-test
       TEST_CONTAINER: omni3d-ci-test
 
     steps:
@@ -28,10 +39,14 @@ jobs:
 
       - name: S1 — Update ${{ env.SUBMODULE }} to pushed commit
         run: |
-          echo "Triggered by $PUSHER pushing to $SUBMODULE"
+          echo "Triggered by $PUSHER for $SUBMODULE"
           cd "$SUBMODULE"
           git fetch origin dev
-          git checkout "$SHA"
+          if [ -n "$SHA" ]; then
+            git checkout "$SHA"
+          else
+            git checkout origin/dev
+          fi
           git log -1 --oneline
 
       # ── S2: unit tests ────────────────────────────────────────────────────────
@@ -76,7 +91,7 @@ jobs:
       - name: S5 — Verify all services RUNNING
         run: |
           echo "── Waiting 10 seconds for services to initialise ──"
-          sleep 10
+          sleep 20
 
           echo "── Supervisorctl status ──"
           docker exec "$TEST_CONTAINER" supervisorctl status

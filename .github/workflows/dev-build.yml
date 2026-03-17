@@ -142,6 +142,9 @@ jobs:
             echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
             echo "── Deb built ──"
             ls -lh *.deb
+            mkdir -p "$RELEASE_DIR"
+            cp *.deb "$RELEASE_DIR/"
+            echo "── Deb copied to $RELEASE_DIR ──"
           else
             echo "── No build_deb.sh found, skipping ──"
           fi

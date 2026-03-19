@@ -75,9 +75,13 @@ jobs:
             .
           echo "── Build complete ──"
 
-      # ── S4: deploy config ───────────────────────────────────────────────────
+      # ── S4: deploy config (only when config repo changed) ──────────────────
       - name: S4 — Deploy config
         run: |
+          if [[ "$SUBMODULE" != *"_Config" ]]; then
+            echo "── $SUBMODULE is not a config repo — skipping config deploy ──"
+            exit 0
+          fi
           ENV_FILE="/home/pro/O3D_Test_Framework/.env"
           source "$ENV_FILE"
           echo "── Machine: $MACHINE_MODEL ──"

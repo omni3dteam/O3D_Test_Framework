@@ -1,19 +1,23 @@
-name: Dev Build
+name: CI
 
 on:
   repository_dispatch:
     types: [submodule-updated]
 
 jobs:
+
+  # ── runs for service repos (not config) ───────────────────────────────────
   build-and-test:
-    if: github.event.client_payload.ref == 'refs/heads/dev'
+    if: |
+      github.event.client_payload.ref == 'refs/heads/dev' &&
+      !contains(github.event.client_payload.submodule, '_Config')
     runs-on: [self-hosted, test-server]
 
     outputs:
-      submodule:        ${{ env.SUBMODULE }}
-      sha:              ${{ env.SHA }}
-      pusher:           ${{ env.PUSHER }}
-      needs_approval:   ${{ steps.email.outputs.needs_approval }}
+      submodule:      ${{ env.SUBMODULE }}
+      sha:            ${{ env.SHA }}
+      pusher:         ${{ env.PUSHER }}
+      needs_approval: ${{ steps.email.outputs.needs_approval }}
 
     env:
       SUBMODULE:      ${{ github.event.client_payload.submodule }}
@@ -24,13 +28,12 @@ jobs:
 
     steps:
 
-      # ── S1: checkout ──────────────────────────────────────────────────────────
       - name: S1 — Checkout O3D_Test_Framework + submodules
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
-          token: ${{ secrets.OMNI3D_CI || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.OMNI3D_CI }}
 
       - name: S1 — Update ${{ env.SUBMODULE }} to pushed commit
         run: |
@@ -40,27 +43,22 @@ jobs:
           git checkout "$SHA"
           git log -1 --oneline
 
-      # ── S2: unit tests ────────────────────────────────────────────────────────
       - name: S2 — Unit tests
         run: |
           cd "$SUBMODULE"
           if [ -d "tests" ]; then
-            echo "── Running pytest ──"
             python3 -m pytest tests/ -v
           else
             echo "── No tests/ directory, skipping ──"
           fi
 
-      # ── S3: build Docker image ────────────────────────────────────────────────
       - name: S3 — Build Docker image
         run: |
-          echo "── Building $TEST_IMAGE ──"
           docker build \
             -f omni3d-container/Dockerfile \
             -t "$TEST_IMAGE" \
             .
 
-      # ── S4: run test container ────────────────────────────────────────────────
       - name: S4 — Start test container
         run: |
           docker rm -f "$TEST_CONTAINER" 2>/dev/null || true
@@ -77,9 +75,7 @@ jobs:
             "$TEST_IMAGE"
           sleep 2
           docker exec "$TEST_CONTAINER" ls -la /var/run/dsf/
-          docker exec "$TEST_CONTAINER" id
 
-      # ── S5: integration test ──────────────────────────────────────────────────
       - name: S5 — Verify all services RUNNING
         run: |
           sleep 20
@@ -102,7 +98,6 @@ jobs:
           fi
           echo "── All services RUNNING ──"
 
-      # ── S6: email tester ──────────────────────────────────────────────────────
       - name: S6 — Email tester
         id: email
         run: |
@@ -116,15 +111,12 @@ jobs:
           TESTER_EMAIL=$(grep "^tester:" "$CHECKLIST_FILE" | sed 's/tester: *//')
           CHECKLIST=$(grep -v "^tester:" "$CHECKLIST_FILE")
           APPROVAL_URL="https://github.com/omni3dteam/O3D_Test_Framework/actions/runs/${{ github.run_id }}"
-          python3 omni3d-container/scripts/send_email.py
+          TESTER_EMAIL="$TESTER_EMAIL" CHECKLIST="$CHECKLIST" APPROVAL_URL="$APPROVAL_URL" \
+            python3 omni3d-container/scripts/send_email.py
         env:
           GMAIL_USER:     ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASS: ${{ secrets.GMAIL_APP_PASS }}
-          TESTER_EMAIL:   ${{ env.TESTER_EMAIL }}
-          CHECKLIST:      ${{ env.CHECKLIST }}
-          APPROVAL_URL:   ${{ env.APPROVAL_URL }}
 
-      # ── cleanup ───────────────────────────────────────────────────────────────
       - name: Cleanup
         if: always()
         run: |
@@ -161,7 +153,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
-          token: ${{ secrets.OMNI3D_CI || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.OMNI3D_CI }}
 
       - name: Update ${{ env.SUBMODULE }} to release commit
         run: |
@@ -202,3 +194,132 @@ jobs:
       - name: Cleanup
         if: always()
         run: docker rmi "$RELEASE_IMAGE" 2>/dev/null || true
+
+  # ── runs for config repos only ─────────────────────────────────────────────
+  deploy-config:
+    if: |
+      github.event.client_payload.ref == 'refs/heads/dev' &&
+      contains(github.event.client_payload.submodule, '_Config')
+    runs-on: [self-hosted, test-server]
+
+    env:
+      SUBMODULE:  ${{ github.event.client_payload.submodule }}
+      SHA:        ${{ github.event.client_payload.sha }}
+      PUSHER:     ${{ github.event.client_payload.pusher }}
+      DSF_DIR:    /opt/dsf
+      BACKUP_DIR: /opt/dsf.backup
+
+    steps:
+
+      - name: Check machine model
+        run: |
+          ENV_FILE="/home/pro/O3D_Test_Framework/.env"
+          if [ ! -f "$ENV_FILE" ]; then
+            echo "── .env not found — cannot determine machine model ──"
+            exit 1
+          fi
+          source "$ENV_FILE"
+          echo "── Machine: $MACHINE_MODEL, Submodule: $SUBMODULE ──"
+          EXPECTED_MODEL=$(echo "$SUBMODULE" | sed 's/_Config//')
+          if [ "$MACHINE_MODEL" != "$EXPECTED_MODEL" ]; then
+            echo "── Machine is $MACHINE_MODEL, skipping $SUBMODULE ──"
+            exit 0
+          fi
+          echo "── Machine matches — proceeding ──"
+          echo "MACHINE_MODEL=$MACHINE_MODEL" >> $GITHUB_ENV
+
+      - name: S1 — Checkout O3D_Test_Framework + submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          token: ${{ secrets.OMNI3D_CI }}
+
+      - name: S1 — Update ${{ env.SUBMODULE }} to pushed commit
+        run: |
+          cd "$SUBMODULE"
+          git fetch origin dev
+          git checkout "$SHA"
+          git log -1 --oneline
+
+      - name: S2 — Validate config files
+        run: |
+          find "$SUBMODULE/src" -name "*.json" | while read f; do
+            python3 -c "import json; json.load(open('$f'))" \
+              && echo "✓ $f" \
+              || { echo "✗ Invalid JSON: $f"; exit 1; }
+          done
+          echo "── Validation passed ──"
+
+      - name: S3 — Stop services
+        run: |
+          docker stop omni3d-stack 2>/dev/null || true
+          echo "── Services stopped ──"
+
+      - name: S4 — Backup current config
+        run: |
+          rm -rf "$BACKUP_DIR"
+          cp -r "$DSF_DIR" "$BACKUP_DIR"
+          echo "── Backup complete ──"
+
+      - name: S5 — Deploy config
+        run: |
+          cp -r "$SUBMODULE/src/macros" "$DSF_DIR/"
+          cp -r "$SUBMODULE/src/sys"    "$DSF_DIR/"
+          echo "── Deploy complete ──"
+
+      - name: S6 — Restart board
+        run: |
+          curl -s -X POST http://localhost/machine/code \
+            -H "Content-Type: text/plain" \
+            -d "M999" || true
+          echo "── Waiting 15 seconds ──"
+          sleep 15
+
+      - name: S7 — Verify board online
+        run: |
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            http://localhost/machine/model --max-time 10 || echo "000")
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "✗ DSF not responding ($HTTP_CODE)"
+            exit 1
+          fi
+          echo "✓ DSF responding"
+
+      - name: S8 — Start services
+        run: |
+          docker start omni3d-stack
+          sleep 10
+          FAILED=0
+          while IFS= read -r line; do
+            NAME=$(echo "$line" | awk '{print $1}')
+            STATE=$(echo "$line" | awk '{print $2}')
+            if [ "$STATE" != "RUNNING" ]; then
+              echo "✗ $NAME is $STATE"
+              FAILED=1
+            else
+              echo "✓ $NAME is RUNNING"
+            fi
+          done < <(docker exec omni3d-stack supervisorctl status)
+          if [ "$FAILED" -eq 1 ]; then exit 1; fi
+          echo "── All services RUNNING ──"
+
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          echo "── FAILURE — rolling back ──"
+          docker stop omni3d-stack 2>/dev/null || true
+          if [ -d "$BACKUP_DIR" ]; then
+            cp -r "$BACKUP_DIR/." "$DSF_DIR/"
+            echo "── Config restored ──"
+          fi
+          curl -s -X POST http://localhost/machine/code \
+            -H "Content-Type: text/plain" \
+            -d "M999" || true
+          sleep 15
+          docker start omni3d-stack 2>/dev/null || true
+          echo "── Rollback complete ──"
+
+      - name: Report status
+        if: always()
+        run: echo "Config deploy ${{ job.status }} for $SUBMODULE @ $SHA"

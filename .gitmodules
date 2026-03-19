@@ -4,3 +4,6 @@
 [submodule "OMNI3D_omnode"]
 	path = OMNI3D_omnode
 	url = git@github.com:omni3dteam/OMNI3D_omnode.git
+[submodule "OMNIPRO_Config"]
+	path = OMNIPRO_Config
+	url = git@github.com:omni3dteam/OMNIPRO_Config.git

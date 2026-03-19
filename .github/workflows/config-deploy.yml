@@ -1,0 +1,171 @@
+name: Config Deploy
+
+on:
+  repository_dispatch:
+    types: [submodule-updated]
+
+jobs:
+  deploy-config:
+    if: github.event.client_payload.ref == 'refs/heads/dev'
+    runs-on: [self-hosted, test-server]
+
+    env:
+      SUBMODULE:  ${{ github.event.client_payload.submodule }}
+      SHA:        ${{ github.event.client_payload.sha }}
+      PUSHER:     ${{ github.event.client_payload.pusher }}
+      DSF_DIR:    /opt/dsf
+      BACKUP_DIR: /opt/dsf.backup
+
+    steps:
+
+      # ── check machine model ───────────────────────────────────────────────────
+      - name: Check machine model
+        run: |
+          if [ ! -f ".env" ]; then
+            echo "── .env not found in O3D_Test_Framework — cannot determine machine model ──"
+            exit 1
+          fi
+          source .env
+          echo "── Machine model: $MACHINE_MODEL ──"
+          echo "── Triggered by: $SUBMODULE ──"
+
+          # OMNIPRO_Config should only run on OMNIPRO
+          # OMNITECH_Config should only run on OMNITECH
+          EXPECTED_MODEL=$(echo "$SUBMODULE" | sed 's/_Config//' | sed 's/OMNI/OMNI/')
+
+          if [ "$MACHINE_MODEL" != "$EXPECTED_MODEL" ]; then
+            echo "── Machine is $MACHINE_MODEL, skipping $SUBMODULE ──"
+            exit 0
+          fi
+
+          echo "── Machine matches — proceeding with deployment ──"
+          echo "MACHINE_MODEL=$MACHINE_MODEL" >> $GITHUB_ENV
+
+      # ── checkout ──────────────────────────────────────────────────────────────
+      - name: S1 — Checkout O3D_Test_Framework + submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          token: ${{ secrets.OMNI3D_CI }}
+
+      - name: S1 — Update ${{ env.SUBMODULE }} to pushed commit
+        run: |
+          cd "$SUBMODULE"
+          git fetch origin dev
+          git checkout "$SHA"
+          git log -1 --oneline
+
+      # ── validate config files ─────────────────────────────────────────────────
+      - name: S2 — Validate config files
+        run: |
+          echo "── Validating config files ──"
+          # check all JSON files are valid
+          find "$SUBMODULE/src" -name "*.json" | while read f; do
+            python3 -c "import json; json.load(open('$f'))" \
+              && echo "✓ $f" \
+              || { echo "✗ Invalid JSON: $f"; exit 1; }
+          done
+          echo "── Validation passed ──"
+
+      # ── stop services ─────────────────────────────────────────────────────────
+      - name: S3 — Stop services
+        run: |
+          echo "── Stopping omni3d-stack ──"
+          docker stop omni3d-stack 2>/dev/null || true
+          echo "── Services stopped ──"
+
+      # ── backup current config ─────────────────────────────────────────────────
+      - name: S4 — Backup current config
+        run: |
+          echo "── Backing up $DSF_DIR to $BACKUP_DIR ──"
+          rm -rf "$BACKUP_DIR"
+          cp -r "$DSF_DIR" "$BACKUP_DIR"
+          echo "── Backup complete ──"
+
+      # ── deploy new config ─────────────────────────────────────────────────────
+      - name: S5 — Deploy config to /opt/dsf
+        run: |
+          echo "── Deploying config from $SUBMODULE/src/ to $DSF_DIR ──"
+          cp -r "$SUBMODULE/src/macros" "$DSF_DIR/"
+          cp -r "$SUBMODULE/src/sys"    "$DSF_DIR/"
+          echo "── Deploy complete ──"
+          ls -la "$DSF_DIR"
+
+      # ── restart board ─────────────────────────────────────────────────────────
+      - name: S6 — Restart board
+        run: |
+          echo "── Sending M999 to restart board ──"
+          curl -s -X POST http://localhost/machine/code \
+            -H "Content-Type: text/plain" \
+            -d "M999" || true
+          echo "── Waiting 15 seconds for board to come back ──"
+          sleep 15
+
+      # ── verify board online ───────────────────────────────────────────────────
+      - name: S7 — Verify board online
+        run: |
+          echo "── Checking DSF is responding ──"
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            http://localhost/machine/model --max-time 10 || echo "000")
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "✗ DSF not responding (got $HTTP_CODE)"
+            exit 1
+          fi
+          echo "✓ DSF responding"
+
+      # ── start services ────────────────────────────────────────────────────────
+      - name: S8 — Start services
+        run: |
+          echo "── Starting omni3d-stack ──"
+          docker start omni3d-stack
+          sleep 10
+          docker exec omni3d-stack supervisorctl status
+
+          FAILED=0
+          while IFS= read -r line; do
+            NAME=$(echo "$line" | awk '{print $1}')
+            STATE=$(echo "$line" | awk '{print $2}')
+            if [ "$STATE" != "RUNNING" ]; then
+              echo "✗ $NAME is $STATE"
+              FAILED=1
+            else
+              echo "✓ $NAME is RUNNING"
+            fi
+          done < <(docker exec omni3d-stack supervisorctl status)
+
+          if [ "$FAILED" -eq 1 ]; then
+            exit 1
+          fi
+          echo "── All services RUNNING ──"
+
+      # ── on failure: rollback ──────────────────────────────────────────────────
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          echo "── FAILURE — rolling back config ──"
+
+          # stop services
+          docker stop omni3d-stack 2>/dev/null || true
+
+          # restore backup
+          if [ -d "$BACKUP_DIR" ]; then
+            cp -r "$BACKUP_DIR/." "$DSF_DIR/"
+            echo "── Config restored from backup ──"
+          fi
+
+          # restart board with old config
+          curl -s -X POST http://localhost/machine/code \
+            -H "Content-Type: text/plain" \
+            -d "M999" || true
+          sleep 15
+
+          # restart services
+          docker start omni3d-stack 2>/dev/null || true
+
+          echo "── Rollback complete ──"
+
+      - name: Report status
+        if: always()
+        run: |
+          echo "Config deploy ${{ job.status }} for $SUBMODULE @ $SHA pushed by $PUSHER"

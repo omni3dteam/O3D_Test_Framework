@@ -10,9 +10,10 @@ jobs:
     runs-on: [self-hosted, test-server]
 
     outputs:
-      submodule: ${{ env.SUBMODULE }}
-      sha:       ${{ env.SHA }}
-      pusher:    ${{ env.PUSHER }}
+      submodule:        ${{ env.SUBMODULE }}
+      sha:              ${{ env.SHA }}
+      pusher:           ${{ env.PUSHER }}
+      needs_approval:   ${{ steps.email.outputs.needs_approval }}
 
     env:
       SUBMODULE:      ${{ github.event.client_payload.submodule }}
@@ -103,12 +104,15 @@ jobs:
 
       # ── S6: email tester ──────────────────────────────────────────────────────
       - name: S6 — Email tester
+        id: email
         run: |
           CHECKLIST_FILE="$SUBMODULE/checklist.md"
           if [ ! -f "$CHECKLIST_FILE" ]; then
             echo "── No checklist.md found — skipping email ──"
+            echo "needs_approval=false" >> $GITHUB_OUTPUT
             exit 0
           fi
+          echo "needs_approval=true" >> $GITHUB_OUTPUT
           TESTER_EMAIL=$(grep "^tester:" "$CHECKLIST_FILE" | sed 's/tester: *//')
           CHECKLIST=$(grep -v "^tester:" "$CHECKLIST_FILE")
           APPROVAL_URL="https://github.com/omni3dteam/O3D_Test_Framework/actions/runs/${{ github.run_id }}"
@@ -131,6 +135,7 @@ jobs:
   # ── manual approval gate ───────────────────────────────────────────────────
   await-approval:
     needs: build-and-test
+    if: needs.build-and-test.outputs.needs_approval == 'true'
     runs-on: [self-hosted, test-server]
     environment: manual-testing
     steps:
@@ -140,6 +145,7 @@ jobs:
   # ── release ───────────────────────────────────────────────────────────────
   release:
     needs: [build-and-test, await-approval]
+    if: always() && needs.build-and-test.result == 'success' && (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     runs-on: [self-hosted, test-server]
 
     env:

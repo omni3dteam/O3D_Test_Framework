@@ -31,7 +31,9 @@ RUN mkdir -p /app
 WORKDIR /build
 
 COPY OMNI3D_Template/src/ /build/OMNI3D_Template/
+COPY OMNI3D_omnode/src/ /build/omnode/
 RUN pyinstaller /build/OMNI3D_Template/template.py --onedir -y \
+    --paths /build \
     --collect-all omnode \
     && mv /build/dist/template /app/template
 

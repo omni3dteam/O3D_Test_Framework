@@ -25,6 +25,19 @@ jobs:
 
     steps:
 
+      # ── S0: check machine is not printing ────────────────────────────────────
+      - name: S0 — Check machine is not printing
+        run: |
+          echo "── Checking machine status ──"
+          STATUS=$(curl -s "http://localhost/rr_connect?password=" > /dev/null &&             curl -s "http://localhost/rr_model?key=state.status" | python3 -c "import sys,json; print(json.load(sys.stdin)['result'])" 2>/dev/null || echo "unknown")
+          echo "── Machine status: $STATUS ──"
+          if [ "$STATUS" = "processing" ]; then
+            echo "── Machine is printing — cancelling CI ──"
+            echo "── Reason: Machine is busy ──"
+            exit 1
+          fi
+          echo "✓ Machine is idle — proceeding"
+
       # ── S1: checkout all submodules at latest dev ───────────────────────────
       - name: S1 — Checkout all submodules at latest dev
         uses: actions/checkout@v4

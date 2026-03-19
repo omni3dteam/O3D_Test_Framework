@@ -111,9 +111,13 @@ jobs:
           sudo cp -r "$CONFIG_DIR/src/sys"    "$DSF_DIR/sd/"
           echo "── Config deployed ──"
 
-      # ── S5: restart board ───────────────────────────────────────────────────
+      # ── S5: restart board (only if config changed) ─────────────────────────
       - name: S5 — Restart board
         run: |
+          if [[ "$SUBMODULE" != *"_Config" ]]; then
+            echo "── Config unchanged — skipping board restart ──"
+            exit 0
+          fi
           echo "── Sending M999 ──"
           curl -s -X POST http://localhost/machine/code \
             -H "Content-Type: text/plain" \
@@ -121,9 +125,13 @@ jobs:
           echo "── Waiting 15 seconds for board ──"
           sleep 15
 
-      # ── S6: verify board online ─────────────────────────────────────────────
+      # ── S6: verify board online (only if config changed) ────────────────────
       - name: S6 — Verify board online
         run: |
+          if [[ "$SUBMODULE" != *"_Config" ]]; then
+            echo "── Board not restarted — skipping check ──"
+            exit 0
+          fi
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
             http://localhost/machine/model --max-time 10 || echo "000")
           if [ "$HTTP_CODE" != "200" ]; then

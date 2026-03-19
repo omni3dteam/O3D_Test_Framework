@@ -6,17 +6,12 @@ on:
 
 jobs:
 
-  # ── runs for service repos (not config) ───────────────────────────────────
+  # ────────────────────────────────────────────────────────────────────────────
   build-and-test:
-    if: |
-      github.event.client_payload.ref == 'refs/heads/dev' &&
-      !contains(github.event.client_payload.submodule, '_Config')
+    if: github.event.client_payload.ref == 'refs/heads/dev'
     runs-on: [self-hosted, test-server]
 
     outputs:
-      submodule:      ${{ env.SUBMODULE }}
-      sha:            ${{ env.SHA }}
-      pusher:         ${{ env.PUSHER }}
       needs_approval: ${{ steps.email.outputs.needs_approval }}
 
     env:
@@ -25,44 +20,118 @@ jobs:
       PUSHER:         ${{ github.event.client_payload.pusher }}
       TEST_IMAGE:     omni3d-stack:ci-test
       TEST_CONTAINER: omni3d-ci-test
+      DSF_DIR:        /opt/dsf
+      BACKUP_DIR:     /opt/dsf.backup
 
     steps:
 
-      - name: S1 — Checkout O3D_Test_Framework + submodules
+      # ── S1: checkout all submodules at latest dev ───────────────────────────
+      - name: S1 — Checkout all submodules at latest dev
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
           token: ${{ secrets.OMNI3D_CI }}
 
-      - name: S1 — Update ${{ env.SUBMODULE }} to pushed commit
+      - name: S1 — Update all submodules to latest dev
         run: |
-          echo "Triggered by $PUSHER for $SUBMODULE"
-          cd "$SUBMODULE"
-          git fetch origin dev
-          git checkout "$SHA"
-          git log -1 --oneline
+          echo "── Triggered by $PUSHER pushing to $SUBMODULE ──"
+          git submodule foreach '
+            git fetch origin dev 2>/dev/null || true
+            git checkout origin/dev 2>/dev/null || git checkout dev 2>/dev/null || true
+            echo "── $name: $(git log -1 --oneline) ──"
+          '
 
+      # ── S2: unit tests for all services ────────────────────────────────────
       - name: S2 — Unit tests
         run: |
-          cd "$SUBMODULE"
-          if [ -d "tests" ]; then
-            python3 -m pytest tests/ -v
-          else
-            echo "── No tests/ directory, skipping ──"
+          FAILED=0
+          for dir in */; do
+            dir="${dir%/}"
+            # skip config repos and omnode
+            if [[ "$dir" == *"_Config" ]] || [[ "$dir" == "OMNI3D_omnode" ]] || [[ "$dir" == "omni3d-container" ]]; then
+              continue
+            fi
+            if [ -d "$dir/tests" ] && [ -f "$dir/pytest.ini" ]; then
+              echo "── Testing $dir ──"
+              cd "$dir"
+              python3 -m pytest tests/ -v || FAILED=1
+              cd ..
+            fi
+          done
+          if [ "$FAILED" -eq 1 ]; then
+            echo "✗ Unit tests failed"
+            exit 1
           fi
+          echo "✓ All unit tests passed"
 
+      # ── S3: build Docker image ──────────────────────────────────────────────
       - name: S3 — Build Docker image
         run: |
+          echo "── Building $TEST_IMAGE ──"
           docker build \
             -f omni3d-container/Dockerfile \
             -t "$TEST_IMAGE" \
             .
+          echo "── Build complete ──"
 
-      - name: S4 — Start test container
+      # ── S4: deploy config ───────────────────────────────────────────────────
+      - name: S4 — Deploy config
+        run: |
+          ENV_FILE="/home/pro/O3D_Test_Framework/.env"
+          source "$ENV_FILE"
+          echo "── Machine: $MACHINE_MODEL ──"
+
+          CONFIG_DIR="${MACHINE_MODEL}PRO_Config"
+          # handle both OMNIPRO and OMNITECH naming
+          if [ -d "OMNIPRO_Config" ] && [ "$MACHINE_MODEL" = "OMNIPRO" ]; then
+            CONFIG_DIR="OMNIPRO_Config"
+          elif [ -d "OMNITECH_Config" ] && [ "$MACHINE_MODEL" = "OMNITECH" ]; then
+            CONFIG_DIR="OMNITECH_Config"
+          else
+            echo "── No matching config dir for $MACHINE_MODEL — skipping ──"
+            exit 0
+          fi
+
+          echo "── Deploying $CONFIG_DIR to $DSF_DIR/sd ──"
+
+          # backup first
+          sudo rm -rf "$BACKUP_DIR"
+          sudo mkdir -p "$BACKUP_DIR/sd"
+          sudo cp -r "$DSF_DIR/sd/macros" "$BACKUP_DIR/sd/" 2>/dev/null || true
+          sudo cp -r "$DSF_DIR/sd/sys"    "$BACKUP_DIR/sd/" 2>/dev/null || true
+          echo "── Backup complete ──"
+
+          # deploy
+          sudo cp -r "$CONFIG_DIR/src/macros" "$DSF_DIR/sd/"
+          sudo cp -r "$CONFIG_DIR/src/sys"    "$DSF_DIR/sd/"
+          echo "── Config deployed ──"
+
+      # ── S5: restart board ───────────────────────────────────────────────────
+      - name: S5 — Restart board
+        run: |
+          echo "── Sending M999 ──"
+          curl -s -X POST http://localhost/machine/code \
+            -H "Content-Type: text/plain" \
+            -d "M999" || true
+          echo "── Waiting 15 seconds for board ──"
+          sleep 15
+
+      # ── S6: verify board online ─────────────────────────────────────────────
+      - name: S6 — Verify board online
+        run: |
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            http://localhost/machine/model --max-time 10 || echo "000")
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "✗ DSF not responding ($HTTP_CODE)"
+            exit 1
+          fi
+          echo "✓ DSF responding"
+
+      # ── S7: start test container ────────────────────────────────────────────
+      - name: S7 — Start test container
         run: |
           docker rm -f "$TEST_CONTAINER" 2>/dev/null || true
-          ls -la /var/run/dsf/
           docker run -d \
             --name "$TEST_CONTAINER" \
             -v /var/run/dsf:/var/run/dsf \
@@ -74,9 +143,9 @@ jobs:
             --group-add 992 \
             "$TEST_IMAGE"
           sleep 2
-          docker exec "$TEST_CONTAINER" ls -la /var/run/dsf/
 
-      - name: S5 — Verify all services RUNNING
+      # ── S8: verify all services RUNNING ────────────────────────────────────
+      - name: S8 — Verify all services RUNNING
         run: |
           sleep 20
           docker exec "$TEST_CONTAINER" supervisorctl status
@@ -93,14 +162,15 @@ jobs:
           done < <(docker exec "$TEST_CONTAINER" supervisorctl status)
           if [ "$FAILED" -eq 1 ]; then
             docker exec "$TEST_CONTAINER" cat /var/log/supervisord.log
-            docker exec "$TEST_CONTAINER" cat /var/log/template.err || true
             exit 1
           fi
           echo "── All services RUNNING ──"
 
-      - name: S6 — Email tester
+      # ── S9: email tester ────────────────────────────────────────────────────
+      - name: S9 — Email tester
         id: email
         run: |
+          # use checklist from triggered submodule if exists
           CHECKLIST_FILE="$SUBMODULE/checklist.md"
           if [ ! -f "$CHECKLIST_FILE" ]; then
             echo "── No checklist.md found — skipping email ──"
@@ -117,6 +187,7 @@ jobs:
           GMAIL_USER:     ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASS: ${{ secrets.GMAIL_APP_PASS }}
 
+      # ── cleanup test container ──────────────────────────────────────────────
       - name: Cleanup
         if: always()
         run: |
@@ -124,7 +195,21 @@ jobs:
           docker rm   "$TEST_CONTAINER" 2>/dev/null || true
           docker rmi  "$TEST_IMAGE"     2>/dev/null || true
 
-  # ── manual approval gate ───────────────────────────────────────────────────
+      # ── rollback config on failure ──────────────────────────────────────────
+      - name: Rollback config on failure
+        if: failure()
+        run: |
+          echo "── FAILURE — rolling back config ──"
+          if [ -d "$BACKUP_DIR/sd" ]; then
+            sudo cp -r "$BACKUP_DIR/sd/macros" "$DSF_DIR/sd/" 2>/dev/null || true
+            sudo cp -r "$BACKUP_DIR/sd/sys"    "$DSF_DIR/sd/" 2>/dev/null || true
+            curl -s -X POST http://localhost/machine/code \
+              -H "Content-Type: text/plain" \
+              -d "M999" || true
+            echo "── Config rolled back ──"
+          fi
+
+  # ── manual approval gate ─────────────────────────────────────────────────
   await-approval:
     needs: build-and-test
     if: needs.build-and-test.outputs.needs_approval == 'true'
@@ -132,17 +217,16 @@ jobs:
     environment: manual-testing
     steps:
       - name: Awaiting manual testing approval
-        run: echo "── Approved — proceeding to release ──"
+        run: echo "── Approved ──"
 
-  # ── release ───────────────────────────────────────────────────────────────
+  # ── release ──────────────────────────────────────────────────────────────
   release:
     needs: [build-and-test, await-approval]
     if: always() && needs.build-and-test.result == 'success' && (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     runs-on: [self-hosted, test-server]
 
     env:
-      SUBMODULE:     ${{ needs.build-and-test.outputs.submodule }}
-      SHA:           ${{ needs.build-and-test.outputs.sha }}
+      SUBMODULE:     ${{ github.event.client_payload.submodule }}
       RELEASE_DIR:   /opt/omni3d/releases
       RELEASE_IMAGE: omni3d-stack:release
 
@@ -155,11 +239,12 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.OMNI3D_CI }}
 
-      - name: Update ${{ env.SUBMODULE }} to release commit
+      - name: Update all submodules to latest dev
         run: |
-          cd "$SUBMODULE"
-          git fetch origin dev
-          git checkout "$SHA"
+          git submodule foreach '
+            git fetch origin dev 2>/dev/null || true
+            git checkout origin/dev 2>/dev/null || git checkout dev 2>/dev/null || true
+          '
 
       - name: R1 — Build release Docker image
         run: |
@@ -168,18 +253,23 @@ jobs:
             -t "$RELEASE_IMAGE" \
             .
 
-      - name: R2 — Build deb package
+      - name: R2 — Build deb packages
         run: |
-          cd "$SUBMODULE/deb"
-          if [ -f "build_deb.sh" ]; then
-            chmod +x build_deb.sh
-            OMNI3D_CI="${{ secrets.OMNI3D_CI }}" bash build_deb.sh
-            NEW_VERSION=$(cat .version 2>/dev/null || echo "1.0")
-            echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
-            mkdir -p "$RELEASE_DIR"
-            cp *.deb "$RELEASE_DIR/"
-            ls -lh "$RELEASE_DIR"/*.deb
-          fi
+          mkdir -p "$RELEASE_DIR"
+          for dir in */; do
+            dir="${dir%/}"
+            if [ -f "$dir/deb/build_deb.sh" ]; then
+              echo "── Building deb for $dir ──"
+              cd "$dir/deb"
+              chmod +x build_deb.sh
+              OMNI3D_CI="${{ secrets.OMNI3D_CI }}" bash build_deb.sh
+              cp *.deb "$RELEASE_DIR/" 2>/dev/null || true
+              NEW_VERSION=$(cat .version 2>/dev/null || echo "1.0")
+              cd ../..
+            fi
+          done
+          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+          ls -lh "$RELEASE_DIR"
 
       - name: R3 — Export Docker image
         run: |
@@ -194,135 +284,3 @@ jobs:
       - name: Cleanup
         if: always()
         run: docker rmi "$RELEASE_IMAGE" 2>/dev/null || true
-
-  # ── runs for config repos only ─────────────────────────────────────────────
-  deploy-config:
-    if: |
-      github.event.client_payload.ref == 'refs/heads/dev' &&
-      contains(github.event.client_payload.submodule, '_Config')
-    runs-on: [self-hosted, test-server]
-
-    env:
-      SUBMODULE:  ${{ github.event.client_payload.submodule }}
-      SHA:        ${{ github.event.client_payload.sha }}
-      PUSHER:     ${{ github.event.client_payload.pusher }}
-      DSF_DIR:    /opt/dsf
-      BACKUP_DIR: /opt/dsf.backup
-
-    steps:
-
-      - name: Check machine model
-        run: |
-          ENV_FILE="/home/pro/O3D_Test_Framework/.env"
-          if [ ! -f "$ENV_FILE" ]; then
-            echo "── .env not found — cannot determine machine model ──"
-            exit 1
-          fi
-          source "$ENV_FILE"
-          echo "── Machine: $MACHINE_MODEL, Submodule: $SUBMODULE ──"
-          EXPECTED_MODEL=$(echo "$SUBMODULE" | sed 's/_Config//')
-          if [ "$MACHINE_MODEL" != "$EXPECTED_MODEL" ]; then
-            echo "── Machine is $MACHINE_MODEL, skipping $SUBMODULE ──"
-            exit 0
-          fi
-          echo "── Machine matches — proceeding ──"
-          echo "MACHINE_MODEL=$MACHINE_MODEL" >> $GITHUB_ENV
-
-      - name: S1 — Checkout O3D_Test_Framework + submodules
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 0
-          token: ${{ secrets.OMNI3D_CI }}
-
-      - name: S1 — Update ${{ env.SUBMODULE }} to pushed commit
-        run: |
-          cd "$SUBMODULE"
-          git fetch origin dev
-          git checkout "$SHA"
-          git log -1 --oneline
-
-      - name: S2 — Validate config files
-        run: |
-          find "$SUBMODULE/src" -name "*.json" | while read f; do
-            python3 -c "import json; json.load(open('$f'))" \
-              && echo "✓ $f" \
-              || { echo "✗ Invalid JSON: $f"; exit 1; }
-          done
-          echo "── Validation passed ──"
-
-      - name: S3 — Stop services
-        run: |
-          docker stop omni3d-stack 2>/dev/null || true
-          echo "── Services stopped ──"
-
-      - name: S4 — Backup current config
-        run: |
-          sudo rm -rf "$BACKUP_DIR"
-          sudo mkdir -p "$BACKUP_DIR/sd"
-          sudo cp -r "$DSF_DIR/sd/macros" "$BACKUP_DIR/sd/" 2>/dev/null || true
-          sudo cp -r "$DSF_DIR/sd/sys"    "$BACKUP_DIR/sd/" 2>/dev/null || true
-          echo "── Backup complete ──"
-
-      - name: S5 — Deploy config
-        run: |
-          sudo cp -r "$SUBMODULE/src/macros" "$DSF_DIR/sd/"
-          sudo cp -r "$SUBMODULE/src/sys"    "$DSF_DIR/sd/"
-          echo "── Deploy complete ──"
-
-      - name: S6 — Restart board
-        run: |
-          curl -s -X POST http://localhost/machine/code \
-            -H "Content-Type: text/plain" \
-            -d "M999" || true
-          echo "── Waiting 15 seconds ──"
-          sleep 15
-
-      - name: S7 — Verify board online
-        run: |
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-            http://localhost/machine/model --max-time 10 || echo "000")
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "✗ DSF not responding ($HTTP_CODE)"
-            exit 1
-          fi
-          echo "✓ DSF responding"
-
-      - name: S8 — Start services
-        run: |
-          docker start omni3d-stack
-          sleep 10
-          FAILED=0
-          while IFS= read -r line; do
-            NAME=$(echo "$line" | awk '{print $1}')
-            STATE=$(echo "$line" | awk '{print $2}')
-            if [ "$STATE" != "RUNNING" ]; then
-              echo "✗ $NAME is $STATE"
-              FAILED=1
-            else
-              echo "✓ $NAME is RUNNING"
-            fi
-          done < <(docker exec omni3d-stack supervisorctl status)
-          if [ "$FAILED" -eq 1 ]; then exit 1; fi
-          echo "── All services RUNNING ──"
-
-      - name: Rollback on failure
-        if: failure()
-        run: |
-          echo "── FAILURE — rolling back ──"
-          docker stop omni3d-stack 2>/dev/null || true
-          if [ -d "$BACKUP_DIR" ]; then
-            sudo cp -r "$BACKUP_DIR/sd/macros" "$DSF_DIR/sd/"
-            sudo cp -r "$BACKUP_DIR/sd/sys"    "$DSF_DIR/sd/"
-            echo "── Config restored ──"
-          fi
-          curl -s -X POST http://localhost/machine/code \
-            -H "Content-Type: text/plain" \
-            -d "M999" || true
-          sleep 15
-          docker start omni3d-stack 2>/dev/null || true
-          echo "── Rollback complete ──"
-
-      - name: Report status
-        if: always()
-        run: echo "Config deploy ${{ job.status }} for $SUBMODULE @ $SHA"

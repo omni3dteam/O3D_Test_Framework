@@ -20,6 +20,11 @@ jobs:
       github.event.client_payload.ref == 'refs/heads/dev'
     runs-on: [self-hosted, test-server]
 
+    outputs:
+      submodule: ${{ env.SUBMODULE }}
+      sha:       ${{ env.SHA }}
+      pusher:    ${{ env.PUSHER }}
+
     env:
       SUBMODULE:      ${{ github.event_name == 'workflow_dispatch' && inputs.submodule || github.event.client_payload.submodule }}
       SHA:            ${{ github.event_name == 'workflow_dispatch' && inputs.sha || github.event.client_payload.sha }}
@@ -134,23 +139,21 @@ jobs:
           CHECKLIST_FILE="$SUBMODULE/checklist.md"
 
           if [ ! -f "$CHECKLIST_FILE" ]; then
-            echo "── No checklist.md found in $SUBMODULE/testing/ — skipping email ──"
+            echo "── No checklist.md found — skipping email ──"
             exit 0
           fi
 
-          # extract tester email from first line
           TESTER_EMAIL=$(grep "^tester:" "$CHECKLIST_FILE" | sed 's/tester: *//')
           CHECKLIST=$(grep -v "^tester:" "$CHECKLIST_FILE")
 
           if [ -z "$TESTER_EMAIL" ]; then
-            echo "── No tester email found in checklist.md — skipping email ──"
+            echo "── No tester email found — skipping email ──"
             exit 0
           fi
 
           echo "── Emailing checklist to $TESTER_EMAIL ──"
 
-          RELEASE_URL="https://github.com/omni3dteam/O3D_Test_Framework/actions/workflows/release.yml"
-          RUN_URL="https://github.com/omni3dteam/O3D_Test_Framework/actions/runs/${{ github.run_id }}"
+          APPROVAL_URL="https://github.com/omni3dteam/O3D_Test_Framework/actions/runs/${{ github.run_id }}"
 
           python3 << EOF
           import smtplib
@@ -165,23 +168,18 @@ jobs:
           msg = MIMEMultipart()
           msg["From"]    = sender
           msg["To"]      = recipient
-          msg["Subject"] = "[OMNI3D] Manual testing required — $SUBMODULE v$(cat $SUBMODULE/deb/.version 2>/dev/null || echo 'dev')"
+          msg["Subject"] = "[OMNI3D] Manual testing required — $SUBMODULE"
 
-          body = """
-          Automated CI passed for $SUBMODULE pushed by $PUSHER.
+          body = """Automated CI passed for $SUBMODULE pushed by $PUSHER.
           Manual testing is now required before release.
 
-          $CHECKLIST
+$CHECKLIST
 
           ---
-          CI Run: $RUN_URL
+          Approve or reject the release here:
+          $APPROVAL_URL
 
-          When manual testing is complete, trigger the release here:
-          $RELEASE_URL
-
-          Click 'Run workflow' and enter:
-            submodule: $SUBMODULE
-            sha: $SHA
+          Click 'Review deployments' to approve and trigger the release build.
           """
 
           msg.attach(MIMEText(body, "plain"))
@@ -203,9 +201,78 @@ jobs:
           docker stop "$TEST_CONTAINER" 2>/dev/null || true
           docker rm   "$TEST_CONTAINER" 2>/dev/null || true
           docker rmi  "$TEST_IMAGE"     2>/dev/null || true
-          echo "── Pipeline complete — awaiting manual testing approval ──"
 
-      - name: Report status
+  # ── manual approval gate ───────────────────────────────────────────────────
+  await-approval:
+    needs: build-and-test
+    runs-on: [self-hosted, test-server]
+    environment: manual-testing
+
+    steps:
+      - name: Awaiting manual testing approval
+        run: |
+          echo "── Manual testing approved — proceeding to release ──"
+
+  # ── release ───────────────────────────────────────────────────────────────
+  release:
+    needs: await-approval
+    runs-on: [self-hosted, test-server]
+
+    env:
+      SUBMODULE:    ${{ needs.build-and-test.outputs.submodule }}
+      SHA:          ${{ needs.build-and-test.outputs.sha }}
+      RELEASE_DIR:  /opt/omni3d/releases
+      RELEASE_IMAGE: omni3d-stack:release
+
+    steps:
+
+      - name: Checkout O3D_Test_Framework + submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          token: ${{ secrets.OMNI3D_CI }}
+
+      - name: Update ${{ env.SUBMODULE }} to release commit
+        run: |
+          cd "$SUBMODULE"
+          git fetch origin dev
+          git checkout "$SHA"
+          git log -1 --oneline
+
+      - name: R1 — Build release Docker image
+        run: |
+          docker build \
+            -f omni3d-container/Dockerfile \
+            -t "$RELEASE_IMAGE" \
+            .
+
+      - name: R2 — Build deb package
+        run: |
+          cd "$SUBMODULE/deb"
+          if [ -f "build_deb.sh" ]; then
+            chmod +x build_deb.sh
+            OMNI3D_CI="${{ secrets.OMNI3D_CI }}" \
+            bash build_deb.sh
+            NEW_VERSION=$(cat .version 2>/dev/null || echo "1.0")
+            echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+            mkdir -p "$RELEASE_DIR"
+            cp *.deb "$RELEASE_DIR/"
+            ls -lh "$RELEASE_DIR"/*.deb
+          fi
+
+      - name: R3 — Export Docker image
+        run: |
+          mkdir -p "$RELEASE_DIR"
+          docker tag "$RELEASE_IMAGE" "omni3d-stack:$NEW_VERSION"
+          docker tag "$RELEASE_IMAGE" "omni3d-stack:latest"
+          TAR_FILE="$RELEASE_DIR/omni3d-stack_${NEW_VERSION}.tar.gz"
+          docker save "omni3d-stack:$NEW_VERSION" | gzip > "$TAR_FILE"
+          echo "── Export complete: $(du -h $TAR_FILE | cut -f1) ──"
+          ls -lh "$RELEASE_DIR"
+
+      - name: Cleanup
         if: always()
         run: |
-          echo "Build ${{ job.status }} for $SUBMODULE @ $SHA pushed by $PUSHER"
+          docker rmi "$RELEASE_IMAGE" 2>/dev/null || true
+          echo "── Release complete — artefacts in $RELEASE_DIR ──"

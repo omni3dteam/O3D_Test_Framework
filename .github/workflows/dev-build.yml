@@ -26,7 +26,6 @@ jobs:
       PUSHER:         ${{ github.event_name == 'workflow_dispatch' && github.actor || github.event.client_payload.pusher }}
       TEST_IMAGE:     omni3d-stack:ci-test
       TEST_CONTAINER: omni3d-ci-test
-      RELEASE_DIR:    /opt/omni3d/releases
 
     steps:
 
@@ -129,53 +128,84 @@ jobs:
 
           echo "── All services RUNNING — integration test passed ──"
 
-      # ── S6: build deb package ─────────────────────────────────────────────────
-      - name: S6 — Build deb package
+      # ── S6: email tester with checklist ───────────────────────────────────────
+      - name: S6 — Email tester
         run: |
-          echo "── Building deb for $SUBMODULE ──"
-          cd "$SUBMODULE/deb"
-          if [ -f "build_deb.sh" ]; then
-            chmod +x build_deb.sh
-            OMNI3D_CI="${{ secrets.OMNI3D_CI }}" \
-            bash build_deb.sh
-            NEW_VERSION=$(cat .version 2>/dev/null || echo "1.0")
-            echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
-            echo "── Deb built ──"
-            ls -lh *.deb
-            mkdir -p "$RELEASE_DIR"
-            cp *.deb "$RELEASE_DIR/"
-            echo "── Deb copied to $RELEASE_DIR ──"
-          else
-            echo "── No build_deb.sh found, skipping ──"
+          CHECKLIST_FILE="$SUBMODULE/checklist.md"
+
+          if [ ! -f "$CHECKLIST_FILE" ]; then
+            echo "── No checklist.md found in $SUBMODULE/testing/ — skipping email ──"
+            exit 0
           fi
 
-      # ── S7: tag and export Docker image ───────────────────────────────────────
-      - name: S7 — Tag and export Docker image
-        run: |
-          mkdir -p "$RELEASE_DIR"
+          # extract tester email from first line
+          TESTER_EMAIL=$(grep "^tester:" "$CHECKLIST_FILE" | sed 's/tester: *//')
+          CHECKLIST=$(grep -v "^tester:" "$CHECKLIST_FILE")
 
-          docker tag "$TEST_IMAGE" "omni3d-stack:$NEW_VERSION"
-          docker tag "$TEST_IMAGE" "omni3d-stack:latest"
-          echo "── Tagged: omni3d-stack:$NEW_VERSION ──"
+          if [ -z "$TESTER_EMAIL" ]; then
+            echo "── No tester email found in checklist.md — skipping email ──"
+            exit 0
+          fi
 
-          TAR_FILE="$RELEASE_DIR/omni3d-stack_${NEW_VERSION}.tar.gz"
-          echo "── Exporting image to $TAR_FILE ──"
-          docker save "omni3d-stack:$NEW_VERSION" | gzip > "$TAR_FILE"
-          echo "── Export complete: $(du -h $TAR_FILE | cut -f1) ──"
-          ls -lh "$RELEASE_DIR"
+          echo "── Emailing checklist to $TESTER_EMAIL ──"
 
-      # ── cleanup test container only, keep the image and tar ──────────────────
+          RELEASE_URL="https://github.com/omni3dteam/O3D_Test_Framework/actions/workflows/release.yml"
+          RUN_URL="https://github.com/omni3dteam/O3D_Test_Framework/actions/runs/${{ github.run_id }}"
+
+          python3 << EOF
+          import smtplib
+          from email.mime.text import MIMEText
+          from email.mime.multipart import MIMEMultipart
+          import os
+
+          sender    = os.environ["GMAIL_USER"]
+          password  = os.environ["GMAIL_APP_PASS"]
+          recipient = "$TESTER_EMAIL"
+
+          msg = MIMEMultipart()
+          msg["From"]    = sender
+          msg["To"]      = recipient
+          msg["Subject"] = "[OMNI3D] Manual testing required — $SUBMODULE v$(cat $SUBMODULE/deb/.version 2>/dev/null || echo 'dev')"
+
+          body = """
+          Automated CI passed for $SUBMODULE pushed by $PUSHER.
+          Manual testing is now required before release.
+
+          $CHECKLIST
+
+          ---
+          CI Run: $RUN_URL
+
+          When manual testing is complete, trigger the release here:
+          $RELEASE_URL
+
+          Click 'Run workflow' and enter:
+            submodule: $SUBMODULE
+            sha: $SHA
+          """
+
+          msg.attach(MIMEText(body, "plain"))
+
+          with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+              smtp.login(sender, password)
+              smtp.sendmail(sender, recipient, msg.as_string())
+
+          print("Email sent to $TESTER_EMAIL")
+          EOF
+        env:
+          GMAIL_USER:     ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASS: ${{ secrets.GMAIL_APP_PASS }}
+
+      # ── cleanup ───────────────────────────────────────────────────────────────
       - name: Cleanup — Remove test container
         if: always()
         run: |
           docker stop "$TEST_CONTAINER" 2>/dev/null || true
           docker rm   "$TEST_CONTAINER" 2>/dev/null || true
           docker rmi  "$TEST_IMAGE"     2>/dev/null || true
-          echo "── Test container removed ──"
-          echo "── Release image kept: omni3d-stack:$NEW_VERSION ──"
-          echo "── Release tar kept: $RELEASE_DIR/omni3d-stack_${NEW_VERSION}.tar.gz ──"
+          echo "── Pipeline complete — awaiting manual testing approval ──"
 
       - name: Report status
         if: always()
         run: |
-          echo "Build ${{ job.status }} for $SUBMODULE @ $SHA v$NEW_VERSION pushed by $PUSHER"
+          echo "Build ${{ job.status }} for $SUBMODULE @ $SHA pushed by $PUSHER"

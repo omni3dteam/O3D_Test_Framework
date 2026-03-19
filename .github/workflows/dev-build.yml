@@ -155,32 +155,36 @@ jobs:
 
           APPROVAL_URL="https://github.com/omni3dteam/O3D_Test_Framework/actions/runs/${{ github.run_id }}"
 
-          python3 << EOF
+          python3 - << 'PYEOF'
           import smtplib
           from email.mime.text import MIMEText
           from email.mime.multipart import MIMEMultipart
           import os
 
-          sender    = os.environ["GMAIL_USER"]
-          password  = os.environ["GMAIL_APP_PASS"]
-          recipient = "$TESTER_EMAIL"
+          sender       = os.environ["GMAIL_USER"]
+          password     = os.environ["GMAIL_APP_PASS"]
+          recipient    = os.environ["TESTER_EMAIL"]
+          submodule    = os.environ["SUBMODULE"]
+          pusher       = os.environ["PUSHER"]
+          checklist    = os.environ["CHECKLIST"]
+          approval_url = os.environ["APPROVAL_URL"]
 
           msg = MIMEMultipart()
           msg["From"]    = sender
           msg["To"]      = recipient
-          msg["Subject"] = "[OMNI3D] Manual testing required — $SUBMODULE"
+          msg["Subject"] = f"[OMNI3D] Manual testing required — {submodule}"
 
-          body = """Automated CI passed for $SUBMODULE pushed by $PUSHER.
-          Manual testing is now required before release.
+          body = f"""Automated CI passed for {submodule} pushed by {pusher}.
+Manual testing is now required before release.
 
-$CHECKLIST
+{checklist}
 
-          ---
-          Approve or reject the release here:
-          $APPROVAL_URL
+---
+Approve or reject the release here:
+{approval_url}
 
-          Click 'Review deployments' to approve and trigger the release build.
-          """
+Click 'Review deployments' to approve and trigger the release build.
+"""
 
           msg.attach(MIMEText(body, "plain"))
 
@@ -188,11 +192,16 @@ $CHECKLIST
               smtp.login(sender, password)
               smtp.sendmail(sender, recipient, msg.as_string())
 
-          print("Email sent to $TESTER_EMAIL")
-          EOF
+          print(f"Email sent to {recipient}")
+          PYEOF
         env:
           GMAIL_USER:     ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASS: ${{ secrets.GMAIL_APP_PASS }}
+          TESTER_EMAIL:   $TESTER_EMAIL
+          SUBMODULE:      $SUBMODULE
+          PUSHER:         $PUSHER
+          CHECKLIST:      $CHECKLIST
+          APPROVAL_URL:   $APPROVAL_URL
 
       # ── cleanup ───────────────────────────────────────────────────────────────
       - name: Cleanup — Remove test container

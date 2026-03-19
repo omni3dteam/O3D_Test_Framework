@@ -29,7 +29,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
-          token: ${{ secrets.OMNI3D_CI }}
+          token: ${{ secrets.OMNI3D_CI || secrets.GITHUB_TOKEN }}
 
       - name: S1 — Update ${{ env.SUBMODULE }} to pushed commit
         run: |
@@ -103,6 +103,7 @@ jobs:
 
       # ── S6: email tester ──────────────────────────────────────────────────────
       - name: S6 — Email tester
+        continue-on-error: true
         run: |
           CHECKLIST_FILE="$SUBMODULE/checklist.md"
           if [ ! -f "$CHECKLIST_FILE" ]; then
@@ -155,7 +156,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
-          token: ${{ secrets.OMNI3D_CI }}
+          token: ${{ secrets.OMNI3D_CI || secrets.GITHUB_TOKEN }}
 
       - name: Update ${{ env.SUBMODULE }} to release commit
         run: |

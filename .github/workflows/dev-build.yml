@@ -3,21 +3,10 @@ name: Dev Build
 on:
   repository_dispatch:
     types: [submodule-updated]
-  workflow_dispatch:
-    inputs:
-      submodule:
-        description: 'Submodule to test'
-        required: true
-        default: 'OMNI3D_Template'
-      sha:
-        description: 'Commit SHA (leave empty for latest dev)'
-        required: false
 
 jobs:
   build-and-test:
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      github.event.client_payload.ref == 'refs/heads/dev'
+    if: github.event.client_payload.ref == 'refs/heads/dev'
     runs-on: [self-hosted, test-server]
 
     outputs:
@@ -26,9 +15,9 @@ jobs:
       pusher:    ${{ env.PUSHER }}
 
     env:
-      SUBMODULE:      ${{ github.event_name == 'workflow_dispatch' && inputs.submodule || github.event.client_payload.submodule }}
-      SHA:            ${{ github.event_name == 'workflow_dispatch' && inputs.sha || github.event.client_payload.sha }}
-      PUSHER:         ${{ github.event_name == 'workflow_dispatch' && github.actor || github.event.client_payload.pusher }}
+      SUBMODULE:      ${{ github.event.client_payload.submodule }}
+      SHA:            ${{ github.event.client_payload.sha }}
+      PUSHER:         ${{ github.event.client_payload.pusher }}
       TEST_IMAGE:     omni3d-stack:ci-test
       TEST_CONTAINER: omni3d-ci-test
 
@@ -47,11 +36,7 @@ jobs:
           echo "Triggered by $PUSHER for $SUBMODULE"
           cd "$SUBMODULE"
           git fetch origin dev
-          if [ -n "$SHA" ]; then
-            git checkout "$SHA"
-          else
-            git checkout origin/dev
-          fi
+          git checkout "$SHA"
           git log -1 --oneline
 
       # ── S2: unit tests ────────────────────────────────────────────────────────
@@ -73,17 +58,12 @@ jobs:
             -f omni3d-container/Dockerfile \
             -t "$TEST_IMAGE" \
             .
-          echo "── Build complete ──"
 
       # ── S4: run test container ────────────────────────────────────────────────
       - name: S4 — Start test container
         run: |
           docker rm -f "$TEST_CONTAINER" 2>/dev/null || true
-
-          echo "── DSF socket on host ──"
           ls -la /var/run/dsf/
-
-          echo "── Starting $TEST_CONTAINER ──"
           docker run -d \
             --name "$TEST_CONTAINER" \
             -v /var/run/dsf:/var/run/dsf \
@@ -94,8 +74,6 @@ jobs:
             --add-host host-gateway:host-gateway \
             --group-add 992 \
             "$TEST_IMAGE"
-
-          echo "── Verify socket inside container ──"
           sleep 2
           docker exec "$TEST_CONTAINER" ls -la /var/run/dsf/
           docker exec "$TEST_CONTAINER" id
@@ -103,108 +81,47 @@ jobs:
       # ── S5: integration test ──────────────────────────────────────────────────
       - name: S5 — Verify all services RUNNING
         run: |
-          echo "── Waiting 20 seconds for services to initialise ──"
           sleep 20
-
-          echo "── Supervisorctl status ──"
           docker exec "$TEST_CONTAINER" supervisorctl status
-
           FAILED=0
           while IFS= read -r line; do
             NAME=$(echo "$line" | awk '{print $1}')
             STATE=$(echo "$line" | awk '{print $2}')
             if [ "$STATE" != "RUNNING" ]; then
-              echo "✗ $NAME is $STATE — expected RUNNING"
+              echo "✗ $NAME is $STATE"
               FAILED=1
             else
               echo "✓ $NAME is RUNNING"
             fi
           done < <(docker exec "$TEST_CONTAINER" supervisorctl status)
-
           if [ "$FAILED" -eq 1 ]; then
-            echo "── Supervisord log ──"
             docker exec "$TEST_CONTAINER" cat /var/log/supervisord.log
-            echo "── template.err ──"
             docker exec "$TEST_CONTAINER" cat /var/log/template.err || true
-            echo "── template.log ──"
-            docker exec "$TEST_CONTAINER" cat /var/log/template.log || true
             exit 1
           fi
+          echo "── All services RUNNING ──"
 
-          echo "── All services RUNNING — integration test passed ──"
-
-      # ── S6: email tester with checklist ───────────────────────────────────────
+      # ── S6: email tester ──────────────────────────────────────────────────────
       - name: S6 — Email tester
         run: |
           CHECKLIST_FILE="$SUBMODULE/checklist.md"
-
           if [ ! -f "$CHECKLIST_FILE" ]; then
             echo "── No checklist.md found — skipping email ──"
             exit 0
           fi
-
           TESTER_EMAIL=$(grep "^tester:" "$CHECKLIST_FILE" | sed 's/tester: *//')
           CHECKLIST=$(grep -v "^tester:" "$CHECKLIST_FILE")
-
-          if [ -z "$TESTER_EMAIL" ]; then
-            echo "── No tester email found — skipping email ──"
-            exit 0
-          fi
-
-          echo "── Emailing checklist to $TESTER_EMAIL ──"
-
           APPROVAL_URL="https://github.com/omni3dteam/O3D_Test_Framework/actions/runs/${{ github.run_id }}"
-
-          python3 - << 'PYEOF'
-          import smtplib
-          from email.mime.text import MIMEText
-          from email.mime.multipart import MIMEMultipart
-          import os
-
-          sender       = os.environ["GMAIL_USER"]
-          password     = os.environ["GMAIL_APP_PASS"]
-          recipient    = os.environ["TESTER_EMAIL"]
-          submodule    = os.environ["SUBMODULE"]
-          pusher       = os.environ["PUSHER"]
-          checklist    = os.environ["CHECKLIST"]
-          approval_url = os.environ["APPROVAL_URL"]
-
-          msg = MIMEMultipart()
-          msg["From"]    = sender
-          msg["To"]      = recipient
-          msg["Subject"] = f"[OMNI3D] Manual testing required — {submodule}"
-
-          body = f"""Automated CI passed for {submodule} pushed by {pusher}.
-Manual testing is now required before release.
-
-{checklist}
-
----
-Approve or reject the release here:
-{approval_url}
-
-Click 'Review deployments' to approve and trigger the release build.
-"""
-
-          msg.attach(MIMEText(body, "plain"))
-
-          with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-              smtp.login(sender, password)
-              smtp.sendmail(sender, recipient, msg.as_string())
-
-          print(f"Email sent to {recipient}")
-          PYEOF
+          python3 omni3d-container/scripts/send_email.py
         env:
           GMAIL_USER:     ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASS: ${{ secrets.GMAIL_APP_PASS }}
-          TESTER_EMAIL:   $TESTER_EMAIL
-          SUBMODULE:      $SUBMODULE
-          PUSHER:         $PUSHER
-          CHECKLIST:      $CHECKLIST
-          APPROVAL_URL:   $APPROVAL_URL
+          TESTER_EMAIL:   ${{ env.TESTER_EMAIL }}
+          CHECKLIST:      ${{ env.CHECKLIST }}
+          APPROVAL_URL:   ${{ env.APPROVAL_URL }}
 
       # ── cleanup ───────────────────────────────────────────────────────────────
-      - name: Cleanup — Remove test container
+      - name: Cleanup
         if: always()
         run: |
           docker stop "$TEST_CONTAINER" 2>/dev/null || true
@@ -216,21 +133,19 @@ Click 'Review deployments' to approve and trigger the release build.
     needs: build-and-test
     runs-on: [self-hosted, test-server]
     environment: manual-testing
-
     steps:
       - name: Awaiting manual testing approval
-        run: |
-          echo "── Manual testing approved — proceeding to release ──"
+        run: echo "── Approved — proceeding to release ──"
 
   # ── release ───────────────────────────────────────────────────────────────
   release:
-    needs: await-approval
+    needs: [build-and-test, await-approval]
     runs-on: [self-hosted, test-server]
 
     env:
-      SUBMODULE:    ${{ needs.build-and-test.outputs.submodule }}
-      SHA:          ${{ needs.build-and-test.outputs.sha }}
-      RELEASE_DIR:  /opt/omni3d/releases
+      SUBMODULE:     ${{ needs.build-and-test.outputs.submodule }}
+      SHA:           ${{ needs.build-and-test.outputs.sha }}
+      RELEASE_DIR:   /opt/omni3d/releases
       RELEASE_IMAGE: omni3d-stack:release
 
     steps:
@@ -247,7 +162,6 @@ Click 'Review deployments' to approve and trigger the release build.
           cd "$SUBMODULE"
           git fetch origin dev
           git checkout "$SHA"
-          git log -1 --oneline
 
       - name: R1 — Build release Docker image
         run: |
@@ -261,8 +175,7 @@ Click 'Review deployments' to approve and trigger the release build.
           cd "$SUBMODULE/deb"
           if [ -f "build_deb.sh" ]; then
             chmod +x build_deb.sh
-            OMNI3D_CI="${{ secrets.OMNI3D_CI }}" \
-            bash build_deb.sh
+            OMNI3D_CI="${{ secrets.OMNI3D_CI }}" bash build_deb.sh
             NEW_VERSION=$(cat .version 2>/dev/null || echo "1.0")
             echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
             mkdir -p "$RELEASE_DIR"
@@ -277,11 +190,9 @@ Click 'Review deployments' to approve and trigger the release build.
           docker tag "$RELEASE_IMAGE" "omni3d-stack:latest"
           TAR_FILE="$RELEASE_DIR/omni3d-stack_${NEW_VERSION}.tar.gz"
           docker save "omni3d-stack:$NEW_VERSION" | gzip > "$TAR_FILE"
-          echo "── Export complete: $(du -h $TAR_FILE | cut -f1) ──"
+          echo "── $(du -h $TAR_FILE | cut -f1) ──"
           ls -lh "$RELEASE_DIR"
 
       - name: Cleanup
         if: always()
-        run: |
-          docker rmi "$RELEASE_IMAGE" 2>/dev/null || true
-          echo "── Release complete — artefacts in $RELEASE_DIR ──"
+        run: docker rmi "$RELEASE_IMAGE" 2>/dev/null || true

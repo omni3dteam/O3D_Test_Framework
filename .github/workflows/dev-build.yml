@@ -103,7 +103,6 @@ jobs:
 
       # ── S6: email tester ──────────────────────────────────────────────────────
       - name: S6 — Email tester
-        continue-on-error: true
         run: |
           CHECKLIST_FILE="$SUBMODULE/checklist.md"
           if [ ! -f "$CHECKLIST_FILE" ]; then

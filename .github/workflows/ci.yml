@@ -259,13 +259,15 @@ jobs:
       - name: S4 — Backup current config
         run: |
           sudo rm -rf "$BACKUP_DIR"
-          sudo cp -r "$DSF_DIR" "$BACKUP_DIR"
+          sudo mkdir -p "$BACKUP_DIR/sd"
+          sudo cp -r "$DSF_DIR/sd/macros" "$BACKUP_DIR/sd/" 2>/dev/null || true
+          sudo cp -r "$DSF_DIR/sd/sys"    "$BACKUP_DIR/sd/" 2>/dev/null || true
           echo "── Backup complete ──"
 
       - name: S5 — Deploy config
         run: |
-          sudo cp -r "$SUBMODULE/src/macros" "$DSF_DIR/"
-          sudo cp -r "$SUBMODULE/src/sys"    "$DSF_DIR/"
+          sudo cp -r "$SUBMODULE/src/macros" "$DSF_DIR/sd/"
+          sudo cp -r "$SUBMODULE/src/sys"    "$DSF_DIR/sd/"
           echo "── Deploy complete ──"
 
       - name: S6 — Restart board
@@ -310,7 +312,8 @@ jobs:
           echo "── FAILURE — rolling back ──"
           docker stop omni3d-stack 2>/dev/null || true
           if [ -d "$BACKUP_DIR" ]; then
-            sudo cp -r "$BACKUP_DIR/." "$DSF_DIR/"
+            sudo cp -r "$BACKUP_DIR/sd/macros" "$DSF_DIR/sd/"
+            sudo cp -r "$BACKUP_DIR/sd/sys"    "$DSF_DIR/sd/"
             echo "── Config restored ──"
           fi
           curl -s -X POST http://localhost/machine/code \

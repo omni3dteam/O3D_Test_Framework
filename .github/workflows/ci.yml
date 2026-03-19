@@ -258,14 +258,14 @@ jobs:
 
       - name: S4 — Backup current config
         run: |
-          rm -rf "$BACKUP_DIR"
-          cp -r "$DSF_DIR" "$BACKUP_DIR"
+          sudo rm -rf "$BACKUP_DIR"
+          sudo cp -r "$DSF_DIR" "$BACKUP_DIR"
           echo "── Backup complete ──"
 
       - name: S5 — Deploy config
         run: |
-          cp -r "$SUBMODULE/src/macros" "$DSF_DIR/"
-          cp -r "$SUBMODULE/src/sys"    "$DSF_DIR/"
+          sudo cp -r "$SUBMODULE/src/macros" "$DSF_DIR/"
+          sudo cp -r "$SUBMODULE/src/sys"    "$DSF_DIR/"
           echo "── Deploy complete ──"
 
       - name: S6 — Restart board
@@ -310,7 +310,7 @@ jobs:
           echo "── FAILURE — rolling back ──"
           docker stop omni3d-stack 2>/dev/null || true
           if [ -d "$BACKUP_DIR" ]; then
-            cp -r "$BACKUP_DIR/." "$DSF_DIR/"
+            sudo cp -r "$BACKUP_DIR/." "$DSF_DIR/"
             echo "── Config restored ──"
           fi
           curl -s -X POST http://localhost/machine/code \

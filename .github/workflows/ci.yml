@@ -274,7 +274,7 @@ jobs:
               echo "── Building deb for $dir ──"
               cd "$dir/deb"
               chmod +x build_deb.sh
-              OMNI3D_CI="${{ secrets.OMNI3D_CI }}" bash build_deb.sh
+              OMNI3D_CI="${{ secrets.OMNI3D_CI }}" bash build_deb.sh pro
               cp *.deb "$RELEASE_DIR/" 2>/dev/null || true
               NEW_VERSION=$(cat .version 2>/dev/null || echo "1.0")
               cd ../..

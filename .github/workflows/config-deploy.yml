@@ -21,11 +21,12 @@ jobs:
       # ── check machine model ───────────────────────────────────────────────────
       - name: Check machine model
         run: |
-          if [ ! -f ".env" ]; then
+          ENV_FILE="/home/pro/O3D_Test_Framework/.env"
+          if [ ! -f "$ENV_FILE" ]; then
             echo "── .env not found in O3D_Test_Framework — cannot determine machine model ──"
             exit 1
           fi
-          source .env
+          source "$ENV_FILE"
           echo "── Machine model: $MACHINE_MODEL ──"
           echo "── Triggered by: $SUBMODULE ──"
 

@@ -32,6 +32,7 @@ WORKDIR /build
 
 COPY OMNI3D_Template/src/ /build/OMNI3D_Template/
 RUN pyinstaller /build/OMNI3D_Template/template.py --onedir -y \
+    --collect-all omnode \
     && mv /build/dist/template /app/template
 
 # ── supervisord config ────────────────────────────────────────────────────────

@@ -310,7 +310,7 @@ jobs:
         run: |
           mkdir -p "$RELEASE_DIR"
           DSF_VERSION=$(dpkg-query -W -f='${Version}' duetsoftwareframework 2>/dev/null || echo "unknown")
-          RELEASED=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          OMNODE_SHA=$(cd OMNI3D_omnode && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
           # collect service SHAs
           SERVICES="{}"
@@ -319,13 +319,9 @@ jobs:
             if [[ "$dir" == *"_Config" ]] || [[ "$dir" == "OMNI3D_omnode" ]] || [[ "$dir" == "omni3d-container" ]]; then
               continue
             fi
-            if [ -f "$dir/.git/HEAD" ] || [ -d "$dir/.git" ]; then
+            if [ -d "$dir/.git" ] || [ -f "$dir/../.git/modules/$dir/HEAD" ]; then
               SHA=$(cd "$dir" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-              SERVICES=$(echo "$SERVICES" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-d['$dir'] = '$SHA'
-print(json.dumps(d))")
+              SERVICES=$(python3 -c "import sys,json; d=json.loads('$SERVICES'); d['$dir']='$SHA'; print(json.dumps(d))")
             fi
           done
 
@@ -335,58 +331,11 @@ print(json.dumps(d))")
             dir="${dir%/}"
             if [ -d "$dir" ]; then
               SHA=$(cd "$dir" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-              CONFIGS=$(echo "$CONFIGS" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-d['$dir'] = '$SHA'
-print(json.dumps(d))")
+              CONFIGS=$(python3 -c "import sys,json; d=json.loads('$CONFIGS'); d['$dir']='$SHA'; print(json.dumps(d))")
             fi
           done
 
-          OMNODE_VERSION=$(cd OMNI3D_omnode && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-
-          python3 - << PYEOF
-import json
-import urllib.request
-
-# query boards from DSF HTTP API
-boards = []
-try:
-    urllib.request.urlopen("http://localhost/rr_connect?password=", timeout=5)
-    with urllib.request.urlopen("http://localhost/rr_model?key=boards", timeout=5) as r:
-        result = json.loads(r.read())["result"]
-        for board in result:
-            boards.append({
-                "name":            board.get("name", "unknown"),
-                "shortName":       board.get("shortName", "unknown"),
-                "firmwareVersion": board.get("firmwareVersion", "unknown"),
-                "firmwareName":    board.get("firmwareName", "unknown"),
-                "firmwareDate":    board.get("firmwareDate", "unknown"),
-                "firmwareFileName":board.get("firmwareFileName", "unknown"),
-                "uniqueId":        board.get("uniqueId", "unknown"),
-                "canAddress":      board.get("canAddress", 0),
-            })
-except Exception as e:
-    boards = [{"error": str(e)}]
-
-data = {
-    "released": "$RELEASED",
-    "container": "$NEW_VERSION",
-    "dsf": "$DSF_VERSION",
-    "omnode": "$OMNODE_VERSION",
-    "services": $SERVICES,
-    "config": $CONFIGS,
-    "boards": boards,
-    "tested_on": "$(hostname)",
-    "triggered_by": "${{ github.event.client_payload.pusher }}"
-}
-
-with open("$RELEASE_DIR/versions.json", "w") as f:
-    json.dump(data, f, indent=2)
-
-print(json.dumps(data, indent=2))
-PYEOF
-          echo "── versions.json written ──"
+          RELEASE_DIR="$RELEASE_DIR"           NEW_VERSION="$NEW_VERSION"           DSF_VERSION="$DSF_VERSION"           OMNODE_SHA="$OMNODE_SHA"           SERVICES="$SERVICES"           CONFIGS="$CONFIGS"           TRIGGERED_BY="${{ github.event.client_payload.pusher }}"           HOSTNAME="$(hostname)"           python3 omni3d-container/scripts/generate_versions.py
 
       - name: R5 — Download DSF deb
         run: |

@@ -3,7 +3,12 @@ name: CI
 on:
   repository_dispatch:
     types: [submodule-updated]
-
+  workflow_dispatch:
+    inputs:
+      submodule:
+        description: 'Submodule'
+        required: true
+        default: 'OMNI3D_omnode'
 jobs:
 
   # ────────────────────────────────────────────────────────────────────────────

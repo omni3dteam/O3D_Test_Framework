@@ -82,8 +82,8 @@ jobs:
           FAILED=0
           for dir in */; do
             dir="${dir%/}"
-            # skip config repos and omnode
-            if [[ "$dir" == *"_Config" ]] || [[ "$dir" == "OMNI3D_omnode" ]] || [[ "$dir" == "omni3d-container" ]]; then
+            # skip non-directories and omni3d-container
+            if [[ "$dir" == "omni3d-container" ]]; then
               continue
             fi
             if [ -d "$dir/tests" ] && [ -f "$dir/pytest.ini" ]; then
@@ -91,6 +91,8 @@ jobs:
               cd "$dir"
               python3 -m pytest tests/ -v || FAILED=1
               cd ..
+            else
+              echo "── No tests found in $dir — skipping ──"
             fi
           done
           if [ "$FAILED" -eq 1 ]; then

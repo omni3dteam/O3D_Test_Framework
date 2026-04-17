@@ -109,6 +109,18 @@ jobs:
             .
           echo "── Build complete ──"
 
+      # ── S4: deploy firmware (only when RRF_Environment changed) ─────────────
+      - name: S4 — Deploy firmware
+        run: |
+          if [[ "$SUBMODULE" != "RRF_Environment" ]]; then
+            echo "── Firmware repo unchanged — skipping firmware deploy ──"
+            exit 0
+          fi
+          # TODO: implement firmware deployment
+          # copy .bin files to /opt/dsf/sd/firmware/
+          echo "── Firmware deployment not yet implemented ──"
+          exit 0
+
       # ── S4: deploy config (only when config repo changed) ──────────────────
       - name: S4 — Deploy config
         run: |
@@ -148,8 +160,8 @@ jobs:
       # ── S5: restart board (only if config changed) ─────────────────────────
       - name: S5 — Restart board
         run: |
-          if [[ "$SUBMODULE" != *"_Config" ]]; then
-            echo "── Config unchanged — skipping board restart ──"
+          if [[ "$SUBMODULE" != *"_Config" ]] && [[ "$SUBMODULE" != "RRF_Environment" ]]; then
+            echo "── Neither config nor firmware changed — skipping board restart ──"
             exit 0
           fi
           echo "── WARNING: Board restart via M999 is disabled until safe command is confirmed ──"
@@ -163,7 +175,7 @@ jobs:
       # ── S6: verify board online (only if config changed) ────────────────────
       - name: S6 — Verify board online
         run: |
-          if [[ "$SUBMODULE" != *"_Config" ]]; then
+          if [[ "$SUBMODULE" != *"_Config" ]] && [[ "$SUBMODULE" != "RRF_Environment" ]]; then
             echo "── Board not restarted — skipping check ──"
             exit 0
           fi

@@ -242,11 +242,33 @@ jobs:
 
       # ── cleanup test container ──────────────────────────────────────────────
       - name: Cleanup
-        if: always()
+        if: success()
         run: |
           docker stop "$TEST_CONTAINER" 2>/dev/null || true
           docker rm   "$TEST_CONTAINER" 2>/dev/null || true
           docker rmi  "$TEST_IMAGE"     2>/dev/null || true
+
+      - name: Keep container on failure
+        if: failure()
+        run: |
+          echo "── Pipeline failed — container kept for debugging ──"
+          echo ""
+          echo "── Access the container with: ──"
+          echo "  docker exec -it $TEST_CONTAINER /bin/bash"
+          echo ""
+          echo "── Check service status: ──"
+          echo "  docker exec $TEST_CONTAINER supervisorctl status"
+          echo ""
+          echo "── Check logs: ──"
+          echo "  docker exec $TEST_CONTAINER cat /var/log/template.err"
+          echo "  docker exec $TEST_CONTAINER cat /var/log/template.log"
+          echo "  docker exec $TEST_CONTAINER cat /var/log/supervisord.log"
+          echo ""
+          echo "── Run binary directly: ──"
+          echo "  docker exec -it $TEST_CONTAINER /app/template/template"
+          echo ""
+          echo "── When done debugging, clean up with: ──"
+          echo "  docker stop $TEST_CONTAINER && docker rm $TEST_CONTAINER && docker rmi $TEST_IMAGE"
 
       # ── rollback config on failure ──────────────────────────────────────────
       - name: Rollback config on failure

@@ -3,17 +3,33 @@ name: CI
 on:
   repository_dispatch:
     types: [submodule-updated]
-  workflow_dispatch:
-    inputs:
-      submodule:
-        description: 'Submodule'
-        required: true
-        default: 'OMNI3D_omnode'
+
 jobs:
+
+  # ── check machine is not printing ─────────────────────────────────────────
+  check-machine:
+    if: github.event.client_payload.ref == 'refs/heads/dev'
+    runs-on: [self-hosted, test-server]
+    outputs:
+      busy: ${{ steps.check.outputs.busy }}
+    steps:
+      - name: Check machine status
+        id: check
+        run: |
+          STATUS=$(curl -s "http://localhost/rr_connect?password=" > /dev/null &&             curl -s "http://localhost/rr_model?key=state.status" |             python3 -c "import sys,json; print(json.load(sys.stdin)['result'])"             2>/dev/null || echo "unknown")
+          echo "── Machine status: $STATUS ──"
+          if [ "$STATUS" = "processing" ]; then
+            echo "── Machine is printing — skipping CI ──"
+            echo "busy=true" >> $GITHUB_OUTPUT
+          else
+            echo "── Machine is idle — proceeding ──"
+            echo "busy=false" >> $GITHUB_OUTPUT
+          fi
 
   # ────────────────────────────────────────────────────────────────────────────
   build-and-test:
-    if: github.event.client_payload.ref == 'refs/heads/dev'
+    needs: check-machine
+    if: needs.check-machine.outputs.busy == 'false'
     runs-on: [self-hosted, test-server]
 
     outputs:
@@ -37,8 +53,8 @@ jobs:
           STATUS=$(curl -s "http://localhost/rr_connect?password=" > /dev/null &&             curl -s "http://localhost/rr_model?key=state.status" | python3 -c "import sys,json; print(json.load(sys.stdin)['result'])" 2>/dev/null || echo "unknown")
           echo "── Machine status: $STATUS ──"
           if [ "$STATUS" = "processing" ]; then
-            echo "── Machine is printing — cancelling CI ──"
-            echo "── Reason: Machine is busy ──"
+            echo "::error title=Machine Busy::CI cancelled — machine is currently printing. Re-trigger the pipeline when the print is complete."
+            echo "── Triggered by: $PUSHER pushing to $SUBMODULE ──"
             exit 1
           fi
           echo "✓ Machine is idle — proceeding"
@@ -241,7 +257,7 @@ jobs:
 
   # ── manual approval gate ─────────────────────────────────────────────────
   await-approval:
-    needs: build-and-test
+    needs: [check-machine, build-and-test]
     if: needs.build-and-test.outputs.needs_approval == 'true'
     runs-on: [self-hosted, test-server]
     environment: manual-testing
@@ -251,7 +267,7 @@ jobs:
 
   # ── release ──────────────────────────────────────────────────────────────
   release:
-    needs: [build-and-test, await-approval]
+    needs: [check-machine, build-and-test, await-approval]
     if: always() && needs.build-and-test.result == 'success' && (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     runs-on: [self-hosted, test-server]
 

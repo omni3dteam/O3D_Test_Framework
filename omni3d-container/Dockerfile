@@ -35,6 +35,8 @@ COPY OMNI3D_omnode/src/ /build/omnode/
 RUN pyinstaller /build/OMNI3D_Template/template.py --onedir -y \
     --paths /build \
     --collect-all omnode \
+    --collect-all fastapi \
+    --collect-all uvicorn \
     && mv /build/dist/template /app/template
 
 # ── supervisord config ────────────────────────────────────────────────────────

@@ -222,10 +222,10 @@ jobs:
           echo "── All services RUNNING ──"
 
       # ── S9: email tester ────────────────────────────────────────────────────
+      # stack is running at this point — tester can test immediately
       - name: S9 — Email tester
         id: email
         run: |
-          # use checklist from triggered submodule if exists
           CHECKLIST_FILE="$SUBMODULE/checklist.md"
           if [ ! -f "$CHECKLIST_FILE" ]; then
             echo "── No checklist.md found — skipping email ──"
@@ -242,13 +242,8 @@ jobs:
           GMAIL_USER:     ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASS: ${{ secrets.GMAIL_APP_PASS }}
 
-      # ── cleanup test container ──────────────────────────────────────────────
-      - name: Cleanup
-        if: success()
-        run: |
-          docker stop "$TEST_CONTAINER" 2>/dev/null || true
-          docker rm   "$TEST_CONTAINER" 2>/dev/null || true
-          docker rmi  "$TEST_IMAGE"     2>/dev/null || true
+      # ── NOTE: test container stays running until await-approval completes ───
+      # cleanup happens in the release job after approval
 
       - name: Keep container on failure
         if: failure()
@@ -319,6 +314,13 @@ jobs:
             git fetch origin dev 2>/dev/null || true
             git checkout origin/dev 2>/dev/null || git checkout dev 2>/dev/null || true
           '
+
+      - name: Cleanup test container
+        run: |
+          docker stop omni3d-ci-test 2>/dev/null || true
+          docker rm   omni3d-ci-test 2>/dev/null || true
+          docker rmi  omni3d-stack:ci-test 2>/dev/null || true
+          echo "── Test container stopped ──"
 
       - name: R1 — Build release Docker image
         run: |

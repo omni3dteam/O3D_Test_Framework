@@ -187,27 +187,7 @@ jobs:
       - name: S7 — Start test container via bootloader
         run: |
           echo "── Signalling bootloader to swap to $TEST_IMAGE ──"
-          RESPONSE=$(python3 -c "
-import socket, json, sys
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.connect('/run/omni3d/bootloader.sock')
-cmd = json.dumps({'action': 'swap', 'image': '$TEST_IMAGE'}) + '
-'
-s.sendall(cmd.encode())
-data = b''
-while True:
-    chunk = s.recv(4096)
-    if not chunk: break
-    data += chunk
-    if b'
-' in data: break
-s.close()
-result = json.loads(data.decode().strip())
-print(json.dumps(result))
-if not result.get('ok'):
-    sys.exit(1)
-")
-          echo "── Bootloader response: $RESPONSE ──"
+          IMAGE="$TEST_IMAGE" ACTION="swap" python3 omni3d-container/scripts/bootloader_cmd.py
 
       # ── S8: verify all services RUNNING ────────────────────────────────────
       - name: S8 — Verify all services RUNNING

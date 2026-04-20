@@ -323,6 +323,24 @@ jobs:
           docker rmi  omni3d-stack:ci-test 2>/dev/null || true
           echo "── Test container stopped ──"
 
+      - name: R0 — Set release version
+        run: |
+          # find latest tar.gz in /opt/omni3d/releases/ and extract version
+          LATEST_TAR=$(ls -t /opt/omni3d/releases/omni3d-stack_*.tar.gz 2>/dev/null | head -1)
+          if [ -n "$LATEST_TAR" ]; then
+            # extract version from filename e.g. omni3d-stack_1.1.tar.gz → 1.1
+            LAST_VERSION=$(basename "$LATEST_TAR" | sed 's/omni3d-stack_//' | sed 's/\.tar\.gz//')
+            echo "── Last release: $LAST_VERSION ──"
+            MAJOR=$(echo "$LAST_VERSION" | cut -d. -f1)
+            MINOR=$(echo "$LAST_VERSION" | cut -d. -f2)
+            NEW_VERSION="${MAJOR}.$((MINOR + 1))"
+          else
+            echo "── No previous release found — starting at 1.0 ──"
+            NEW_VERSION="1.0"
+          fi
+          echo "── New version: $NEW_VERSION ──"
+          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+
       - name: R1 — Build release Docker image
         run: |
           docker build \

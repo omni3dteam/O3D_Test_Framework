@@ -183,28 +183,37 @@ jobs:
           fi
           echo "── Board restart disabled — skipping online check ──"
 
-      # ── S7: start test container ────────────────────────────────────────────
-      - name: S7 — Start test container
+      # ── S7: start test container via bootloader ─────────────────────────────
+      - name: S7 — Start test container via bootloader
         run: |
-          docker rm -f "$TEST_CONTAINER" 2>/dev/null || true
-          docker run -d \
-            --name "$TEST_CONTAINER" \
-            -v /var/run/dsf:/var/run/dsf \
-            -v /run/omni3d:/run/omni3d \
-            -v /opt/dsf/sd/timelaps:/opt/dsf/sd/timelaps \
-            -v /opt/dsf/timelaps:/opt/dsf/timelaps \
-            -v /opt/omni3d/config:/app/config \
-            --add-host host-gateway:host-gateway \
-            --group-add 992 \
-            -p 5002:5002 \
-            "$TEST_IMAGE"
-          sleep 2
+          echo "── Signalling bootloader to swap to $TEST_IMAGE ──"
+          RESPONSE=$(python3 -c "
+import socket, json, sys
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.connect('/run/omni3d/bootloader.sock')
+cmd = json.dumps({'action': 'swap', 'image': '$TEST_IMAGE'}) + '
+'
+s.sendall(cmd.encode())
+data = b''
+while True:
+    chunk = s.recv(4096)
+    if not chunk: break
+    data += chunk
+    if b'
+' in data: break
+s.close()
+result = json.loads(data.decode().strip())
+print(json.dumps(result))
+if not result.get('ok'):
+    sys.exit(1)
+")
+          echo "── Bootloader response: $RESPONSE ──"
 
       # ── S8: verify all services RUNNING ────────────────────────────────────
       - name: S8 — Verify all services RUNNING
         run: |
           sleep 20
-          docker exec "$TEST_CONTAINER" supervisorctl status
+          docker exec omni3d-main supervisorctl status
           FAILED=0
           while IFS= read -r line; do
             NAME=$(echo "$line" | awk '{print $1}')
@@ -215,9 +224,9 @@ jobs:
             else
               echo "✓ $NAME is RUNNING"
             fi
-          done < <(docker exec "$TEST_CONTAINER" supervisorctl status)
+          done < <(docker exec omni3d-main supervisorctl status)
           if [ "$FAILED" -eq 1 ]; then
-            docker exec "$TEST_CONTAINER" cat /var/log/supervisord.log
+            docker exec omni3d-main cat /var/log/supervisord.log
             exit 1
           fi
           echo "── All services RUNNING ──"
@@ -252,21 +261,21 @@ jobs:
           echo "── Pipeline failed — container kept for debugging ──"
           echo ""
           echo "── Access the container with: ──"
-          echo "  docker exec -it $TEST_CONTAINER /bin/bash"
+          echo "  docker exec -it omni3d-main /bin/bash"
           echo ""
           echo "── Check service status: ──"
-          echo "  docker exec $TEST_CONTAINER supervisorctl status"
+          echo "  docker exec omni3d-main supervisorctl status"
           echo ""
           echo "── Check logs: ──"
-          echo "  docker exec $TEST_CONTAINER cat /var/log/template.err"
-          echo "  docker exec $TEST_CONTAINER cat /var/log/template.log"
-          echo "  docker exec $TEST_CONTAINER cat /var/log/supervisord.log"
+          echo "  docker exec omni3d-main cat /var/log/template.err"
+          echo "  docker exec omni3d-main cat /var/log/template.log"
+          echo "  docker exec omni3d-main cat /var/log/supervisord.log"
           echo ""
           echo "── Run binary directly: ──"
-          echo "  docker exec -it $TEST_CONTAINER /app/template/template"
+          echo "  docker exec -it omni3d-main /app/template/template"
           echo ""
           echo "── When done debugging, clean up with: ──"
-          echo "  docker stop $TEST_CONTAINER && docker rm $TEST_CONTAINER && docker rmi $TEST_IMAGE"
+          echo "  Trigger rollback via bootloader: echo '{\"action\": \"rollback\"}' | python3 -c \"...\"
 
       # ── rollback config on failure ──────────────────────────────────────────
       - name: Rollback config on failure
@@ -316,12 +325,10 @@ jobs:
             git checkout origin/dev 2>/dev/null || git checkout dev 2>/dev/null || true
           '
 
-      - name: Cleanup test container
+      - name: Cleanup test image
         run: |
-          docker stop omni3d-ci-test 2>/dev/null || true
-          docker rm   omni3d-ci-test 2>/dev/null || true
-          docker rmi  omni3d-stack:ci-test 2>/dev/null || true
-          echo "── Test container stopped ──"
+          docker rmi omni3d-stack:ci-test 2>/dev/null || true
+          echo "── Test image removed — omni3d-main kept running ──"
 
       - name: R0 — Set release version
         run: |

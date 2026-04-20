@@ -196,6 +196,7 @@ jobs:
             -v /opt/omni3d/config:/app/config \
             --add-host host-gateway:host-gateway \
             --group-add 992 \
+            -p 5002:5002 \
             "$TEST_IMAGE"
           sleep 2
 

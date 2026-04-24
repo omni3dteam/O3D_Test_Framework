@@ -7,3 +7,12 @@
 [submodule "OMNIPRO_Config"]
 	path = OMNIPRO_Config
 	url = git@github.com:omni3dteam/OMNIPRO_Config.git
+[submodule "OMNI3D_Work_Time_Counter"]
+	path = OMNI3D_Work_Time_Counter
+	url = git@github.com:omni3dteam/OMNI3D_Work_Time_Counter.git
+[submodule "OMNI3D_MMS"]
+	path = OMNI3D_MMS
+	url = git@github.com:omni3dteam/OMNI3D_MMS.git
+[submodule "O3D_Bootloader"]
+	path = O3D_Bootloader
+	url = git@github.com:omni3dteam/O3D_Bootloader.git

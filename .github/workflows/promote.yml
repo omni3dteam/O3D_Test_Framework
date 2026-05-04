@@ -1,0 +1,372 @@
+name: Promote to Production
+
+on:
+  repository_dispatch:
+    types: [promote]
+
+jobs:
+
+  # ── check machine is not printing ─────────────────────────────────────────
+  check-machine:
+    if: github.event.client_payload.ref == 'refs/heads/main' || github.event_name == 'repository_dispatch'
+    runs-on: [self-hosted, test-server]
+    outputs:
+      busy: ${{ steps.check.outputs.busy }}
+    steps:
+      - name: Check machine status
+        id: check
+        run: |
+          STATUS=$(curl -s --max-time 5 \
+            "http://localhost/machine/model" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin).get('state',{}).get('status','unknown'))" \
+            2>/dev/null || echo "unknown")
+          echo "── Machine status: $STATUS ──"
+          if [ "$STATUS" = "processing" ] || [ "$STATUS" = "unknown" ]; then
+            echo "── Machine is busy — skipping promotion ──"
+            echo "busy=true" >> $GITHUB_OUTPUT
+          else
+            echo "busy=false" >> $GITHUB_OUTPUT
+          fi
+
+  # ── build and verify ──────────────────────────────────────────────────────
+  build-and-verify:
+    needs: check-machine
+    if: needs.check-machine.outputs.busy == 'false'
+    runs-on: [self-hosted, test-server]
+    timeout-minutes: 60
+
+    env:
+      SUBMODULE:      ${{ github.event.client_payload.submodule }}
+      PR_BRANCH:      ${{ github.event.client_payload.pr_branch }}
+      PR_NUMBER:      ${{ github.event.client_payload.pr_number }}
+      SHA:            ${{ github.event.client_payload.sha }}
+      PUSHER:         ${{ github.event.client_payload.pusher }}
+      PROMOTE_IMAGE:  omni3d-stack:promote
+      DSF_DIR:        /opt/dsf
+      BACKUP_DIR:     /opt/dsf.backup
+
+    steps:
+
+      # ── P1: checkout ────────────────────────────────────────────────────────
+      - name: P1 — Checkout O3D_Test_Framework + submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          token: ${{ secrets.OMNI3D_CI }}
+
+      - name: P1 — Checkout main for all, PR branch for triggered submodule
+        run: |
+          echo "── Promoting $SUBMODULE PR#$PR_NUMBER ──"
+          git submodule foreach '
+            git fetch --all 2>/dev/null || true
+            if [ "$name" = "$SUBMODULE" ]; then
+              echo "── $name: checking out PR branch $PR_BRANCH ──"
+              git checkout origin/$PR_BRANCH 2>/dev/null || git checkout $PR_BRANCH
+            else
+              echo "── $name: checking out main ──"
+              git checkout origin/main 2>/dev/null || git checkout main 2>/dev/null || git checkout origin/dev
+            fi
+            echo "── $name: $(git log -1 --oneline) ──"
+          '
+
+      # ── P2: unit tests ───────────────────────────────────────────────────────
+      - name: P2 — Unit tests
+        run: |
+          FAILED=0
+          for dir in */; do
+            dir="${dir%/}"
+            if [[ "$dir" == "omni3d-container" ]]; then
+              continue
+            fi
+            if [ -d "$dir/tests" ] && [ -f "$dir/pytest.ini" ]; then
+              echo "── Testing $dir ──"
+              cd "$dir"
+              python3 -m pytest tests/ -v || FAILED=1
+              cd ..
+            else
+              echo "── No tests in $dir — skipping ──"
+            fi
+          done
+          if [ "$FAILED" -eq 1 ]; then
+            echo "✗ Unit tests failed"
+            exit 1
+          fi
+          echo "✓ All unit tests passed"
+
+      # ── P3: build Docker image ───────────────────────────────────────────────
+      - name: P3 — Build Docker image
+        run: |
+          echo "── Building $PROMOTE_IMAGE ──"
+          docker build \
+            -f omni3d-container/Dockerfile \
+            -t "$PROMOTE_IMAGE" \
+            .
+          echo "── Build complete ──"
+
+      # ── P4: deploy config ────────────────────────────────────────────────────
+      - name: P4 — Deploy config
+        run: |
+          ENV_FILE="/home/pro/O3D_Test_Framework/.env"
+          source "$ENV_FILE"
+          if [ "$MACHINE_MODEL" = "OMNIPRO" ] && [ -d "OMNIPRO_Config" ]; then
+            CONFIG_DIR="OMNIPRO_Config"
+          elif [ "$MACHINE_MODEL" = "OMNITECH" ] && [ -d "OMNITECH_Config" ]; then
+            CONFIG_DIR="OMNITECH_Config"
+          else
+            echo "── No matching config — skipping ──"
+            exit 0
+          fi
+          sudo rm -rf "$BACKUP_DIR"
+          sudo mkdir -p "$BACKUP_DIR/sd"
+          sudo cp -r "$DSF_DIR/sd/macros" "$BACKUP_DIR/sd/" 2>/dev/null || true
+          sudo cp -r "$DSF_DIR/sd/sys"    "$BACKUP_DIR/sd/" 2>/dev/null || true
+          sudo cp -r "$CONFIG_DIR/src/macros" "$DSF_DIR/sd/"
+          sudo cp -r "$CONFIG_DIR/src/sys"    "$DSF_DIR/sd/"
+          echo "── Config deployed ──"
+
+      # ── P5: restart board ────────────────────────────────────────────────────
+      - name: P5 — Restart board
+        run: |
+          echo "── Board restart disabled — please restart manually if needed ──"
+          # TODO: add safe restart command
+          # curl -s -X POST http://localhost/machine/code -d "M999"
+          # sleep 15
+
+      # ── P6: start container via bootloader ───────────────────────────────────
+      - name: P6 — Deploy via bootloader
+        run: |
+          echo "── Signalling bootloader to swap to $PROMOTE_IMAGE ──"
+          IMAGE="$PROMOTE_IMAGE" ACTION="swap" \
+            python3 omni3d-container/scripts/bootloader_cmd.py
+
+      # ── P7: verify services RUNNING ──────────────────────────────────────────
+      - name: P7 — Verify all services RUNNING
+        run: |
+          sleep 20
+          docker exec omni3d-main supervisorctl status
+          FAILED=0
+          while IFS= read -r line; do
+            NAME=$(echo "$line" | awk '{print $1}')
+            STATE=$(echo "$line" | awk '{print $2}')
+            if [ "$STATE" != "RUNNING" ]; then
+              echo "✗ $NAME is $STATE"
+              FAILED=1
+            else
+              echo "✓ $NAME is RUNNING"
+            fi
+          done < <(docker exec omni3d-main supervisorctl status)
+          if [ "$FAILED" -eq 1 ]; then
+            docker exec omni3d-main cat /var/log/supervisord.log
+            exit 1
+          fi
+          echo "── All services RUNNING ──"
+
+      - name: Keep container on failure
+        if: failure()
+        run: |
+          echo "── Pipeline failed — container kept for debugging ──"
+          echo "  docker exec -it omni3d-main /bin/bash"
+          echo "  docker exec omni3d-main supervisorctl status"
+          echo "  docker exec omni3d-main cat /var/log/template.err"
+
+  # ── soak test (48h) ───────────────────────────────────────────────────────
+  soak:
+    needs: build-and-verify
+    runs-on: [self-hosted, test-server]
+    timeout-minutes: 2940  # 49h — gives soak 48h + 1h buffer
+
+    steps:
+      - name: Checkout O3D_Test_Framework
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.OMNI3D_CI }}
+
+      - name: Run 48h soak watchdog
+        run: |
+          SOAK_HOURS=48 \
+          CHECK_INTERVAL_MIN=5 \
+          CONTAINER_NAME=omni3d-main \
+          REPORT_PATH=/opt/omni3d/releases/soak_report.json \
+          python3 omni3d-container/scripts/soak_watchdog.py
+
+      - name: Upload soak report
+        if: always()
+        run: |
+          echo "── Soak report ──"
+          cat /opt/omni3d/releases/soak_report.md || true
+
+  # ── manual testing (parallel with soak) ──────────────────────────────────
+  manual-testing:
+    needs: build-and-verify
+    runs-on: [self-hosted, test-server]
+
+    steps:
+      - name: Checkout O3D_Test_Framework
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.OMNI3D_CI }}
+
+      - name: Email tester with checklist and soak report link
+        run: |
+          CHECKLIST_FILE="checklist.md"
+          if [ ! -f "$CHECKLIST_FILE" ]; then
+            echo "── No checklist.md found — skipping email ──"
+            exit 0
+          fi
+          TESTER_EMAIL=$(grep "^tester:" "$CHECKLIST_FILE" | sed 's/tester: *//')
+          CHECKLIST=$(grep -v "^tester:" "$CHECKLIST_FILE")
+          APPROVAL_URL="https://github.com/omni3dteam/O3D_Test_Framework/actions/runs/${{ github.run_id }}"
+          TESTER_EMAIL="$TESTER_EMAIL" \
+          CHECKLIST="$CHECKLIST" \
+          APPROVAL_URL="$APPROVAL_URL" \
+          python3 omni3d-container/scripts/send_email.py
+        env:
+          GMAIL_USER:     ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASS: ${{ secrets.GMAIL_APP_PASS }}
+
+  # ── approval gate ─────────────────────────────────────────────────────────
+  await-approval:
+    needs: manual-testing
+    runs-on: [self-hosted, test-server]
+    environment: manual-testing
+    steps:
+      - name: Awaiting manual testing approval
+        run: echo "── Manual testing approved ──"
+
+  # ── release (both soak and approval must pass) ────────────────────────────
+  release:
+    needs: [soak, await-approval]
+    if: always() && needs.soak.result == 'success' && needs.await-approval.result == 'success'
+    runs-on: [self-hosted, test-server]
+
+    env:
+      SUBMODULE:     ${{ github.event.client_payload.submodule }}
+      PR_BRANCH:     ${{ github.event.client_payload.pr_branch }}
+      RELEASE_DIR:   /opt/omni3d/releases
+      RELEASE_IMAGE: omni3d-stack:release
+
+    steps:
+
+      - name: Checkout O3D_Test_Framework + submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          token: ${{ secrets.OMNI3D_CI }}
+
+      - name: Update all submodules — main for all, PR branch for triggered
+        run: |
+          git submodule foreach '
+            git fetch --all 2>/dev/null || true
+            if [ "$name" = "$SUBMODULE" ]; then
+              git checkout origin/$PR_BRANCH 2>/dev/null || git checkout $PR_BRANCH
+            else
+              git checkout origin/main 2>/dev/null || git checkout main 2>/dev/null || true
+            fi
+          '
+
+      - name: R0 — Set release version
+        run: |
+          LATEST_TAR=$(ls -t /opt/omni3d/releases/omni3d-stack_*.tar.gz 2>/dev/null | head -1)
+          if [ -n "$LATEST_TAR" ]; then
+            LAST_VERSION=$(basename "$LATEST_TAR" | sed 's/omni3d-stack_//' | sed 's/\.tar\.gz//')
+            MAJOR=$(echo "$LAST_VERSION" | cut -d. -f1)
+            MINOR=$(echo "$LAST_VERSION" | cut -d. -f2)
+            NEW_VERSION="${MAJOR}.$((MINOR + 1))"
+          else
+            NEW_VERSION="1.0"
+          fi
+          echo "── Production release version: $NEW_VERSION ──"
+          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+
+      - name: R1 — Build production Docker image
+        run: |
+          docker build \
+            -f omni3d-container/Dockerfile \
+            -t "$RELEASE_IMAGE" \
+            .
+
+      - name: R2 — Build deb packages
+        run: |
+          mkdir -p "$RELEASE_DIR"
+          for dir in */; do
+            dir="${dir%/}"
+            if [ -f "$dir/deb/build_deb.sh" ]; then
+              echo "── Building deb for $dir ──"
+              cd "$dir/deb"
+              chmod +x build_deb.sh
+              OMNI3D_CI="${{ secrets.OMNI3D_CI }}" bash build_deb.sh pro
+              cp *.deb "$RELEASE_DIR/" 2>/dev/null || true
+              cd ../..
+            fi
+          done
+
+      - name: R3 — Export Docker image
+        run: |
+          mkdir -p "$RELEASE_DIR"
+          docker tag "$RELEASE_IMAGE" "omni3d-stack:$NEW_VERSION"
+          docker tag "$RELEASE_IMAGE" "omni3d-stack:production"
+          TAR_FILE="$RELEASE_DIR/omni3d-stack_${NEW_VERSION}.tar.gz"
+          docker save "omni3d-stack:$NEW_VERSION" | gzip > "$TAR_FILE"
+          echo "── $(du -h $TAR_FILE | cut -f1) ──"
+
+      - name: R4 — Generate versions.json
+        run: |
+          DSF_VERSION=$(dpkg-query -W -f='${Version}' duetsoftwareframework 2>/dev/null || echo "unknown")
+          OMNODE_SHA=$(cd OMNI3D_omnode && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+          SERVICES="{}"
+          for dir in */; do
+            dir="${dir%/}"
+            if [[ "$dir" == *"_Config" ]] || [[ "$dir" == "OMNI3D_omnode" ]] || [[ "$dir" == "omni3d-container" ]]; then
+              continue
+            fi
+            if [ -d "$dir" ]; then
+              SHA=$(cd "$dir" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+              SERVICES=$(python3 -c "import sys,json; d=json.loads('$SERVICES'); d['$dir']='$SHA'; print(json.dumps(d))")
+            fi
+          done
+          CONFIGS="{}"
+          for dir in *_Config/; do
+            dir="${dir%/}"
+            if [ -d "$dir" ]; then
+              SHA=$(cd "$dir" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+              CONFIGS=$(python3 -c "import sys,json; d=json.loads('$CONFIGS'); d['$dir']='$SHA'; print(json.dumps(d))")
+            fi
+          done
+          RELEASE_DIR="$RELEASE_DIR" \
+          NEW_VERSION="$NEW_VERSION" \
+          DSF_VERSION="$DSF_VERSION" \
+          OMNODE_SHA="$OMNODE_SHA" \
+          SERVICES="$SERVICES" \
+          CONFIGS="$CONFIGS" \
+          TRIGGERED_BY="${{ github.event.client_payload.pusher }}" \
+          HOSTNAME="$(hostname)" \
+          python3 omni3d-container/scripts/generate_versions.py
+
+      - name: R5 — Tag all submodules as production
+        run: |
+          git config --global user.email "ci@omni3d.com"
+          git config --global user.name "OMNI3D CI"
+          git submodule foreach '
+            git fetch --all 2>/dev/null || true
+            git tag "production-v$NEW_VERSION" -m "Production release v$NEW_VERSION" 2>/dev/null || true
+            git push origin "production-v$NEW_VERSION" 2>/dev/null || true
+            echo "── $name tagged production-v$NEW_VERSION ──"
+          '
+          git tag "production-v$NEW_VERSION" -m "Production release v$NEW_VERSION" 2>/dev/null || true
+          git push origin "production-v$NEW_VERSION" 2>/dev/null || true
+          echo "── O3D_Test_Framework tagged production-v$NEW_VERSION ──"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker rmi "$RELEASE_IMAGE" 2>/dev/null || true
+          docker rmi "omni3d-stack:promote" 2>/dev/null || true
+
+      - name: Report status
+        if: always()
+        run: |
+          echo "Production release ${{ job.status }} v$NEW_VERSION"
+          echo "── Soak report ──"
+          cat /opt/omni3d/releases/soak_report.md || true

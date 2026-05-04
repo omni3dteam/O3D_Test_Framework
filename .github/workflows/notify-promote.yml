@@ -1,0 +1,27 @@
+name: Notify Promote
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch to O3D_Test_Framework
+        run: |
+          curl -X POST \
+            -H "Authorization: token ${{ secrets.OMNI3D_CI }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/omni3dteam/O3D_Test_Framework/dispatches \
+            -d '{
+              "event_type": "promote",
+              "client_payload": {
+                "submodule": "${{ github.event.repository.name }}",
+                "pr_branch": "${{ github.head_ref }}",
+                "pr_number": "${{ github.event.pull_request.number }}",
+                "sha":       "${{ github.event.pull_request.head.sha }}",
+                "pusher":    "${{ github.actor }}"
+              }
+            }'

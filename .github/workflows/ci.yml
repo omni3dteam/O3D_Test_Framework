@@ -102,6 +102,16 @@ jobs:
           fi
           echo "✓ All unit tests passed"
 
+      # ── S2.5: generate Dockerfile and supervisord from detected services ────
+      - name: S2.5 — Generate Dockerfile and supervisord
+        run: |
+          echo "── Detecting service submodules ──"
+          python3 omni3d-container/scripts/generate_config.py .
+          echo "── Generated Dockerfile ──"
+          cat omni3d-container/Dockerfile
+          echo "── Generated supervisord.conf ──"
+          cat omni3d-container/supervisord.conf
+
       # ── S3: build Docker image ──────────────────────────────────────────────
       - name: S3 — Build Docker image
         run: |
@@ -328,6 +338,9 @@ jobs:
           fi
           echo "── New version: $NEW_VERSION ──"
           echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+
+      - name: R0.5 — Generate Dockerfile and supervisord
+        run: python3 omni3d-container/scripts/generate_config.py .
 
       - name: R1 — Build release Docker image
         run: |

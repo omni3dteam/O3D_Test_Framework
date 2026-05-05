@@ -46,6 +46,9 @@ jobs:
 
     steps:
 
+      - name: Set image tag
+        run: echo "TEST_IMAGE=omni3d-stack:ci-test-$(date +%Y%m%d-%H%M%S)" >> $GITHUB_ENV
+
       # ── S0: check machine is not printing ────────────────────────────────────
       - name: S0 — Check machine is not printing
         run: |

@@ -29,6 +29,13 @@ RUN pyinstaller /build/OMNI3D_MMS/mms.py --onedir -y \
     --collect-all uvicorn \
     && mv /build/dist/mms /app/mms
 
+COPY OMNI3D_RFID_Middleware/src/ /build/OMNI3D_RFID_Middleware/
+RUN pyinstaller /build/OMNI3D_RFID_Middleware/database.py --onedir -y \
+    --collect-all omnode \
+    --collect-all fastapi \
+    --collect-all uvicorn \
+    && mv /build/dist/database /app/database
+
 COPY OMNI3D_Template/src/ /build/OMNI3D_Template/
 RUN pyinstaller /build/OMNI3D_Template/template.py --onedir -y \
     --collect-all omnode \

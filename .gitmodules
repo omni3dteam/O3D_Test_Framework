@@ -16,3 +16,6 @@
 [submodule "O3D_Bootloader"]
 	path = O3D_Bootloader
 	url = git@github.com:omni3dteam/O3D_Bootloader.git
+[submodule "OMNI3D_RFID_Middleware"]
+	path = OMNI3D_RFID_Middleware
+	url = git@github.com:omni3dteam/OMNI3D_RFID_Middleware.git

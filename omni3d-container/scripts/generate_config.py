@@ -95,6 +95,11 @@ def generate_dockerfile(services):
         "# ── supervisord config ───────────────────────────────────────────────",
         "COPY omni3d-container/supervisord.conf /etc/supervisor/conf.d/omni3d.conf",
         "",
+        "EXPOSE 5000-5005",
+        "",
+        "# ── expose ports ───────────────────────────────────────────────────────",
+        "EXPOSE 5000-5005",
+        "",
         "WORKDIR /app",
         'CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/conf.d/omni3d.conf"]',
     ]

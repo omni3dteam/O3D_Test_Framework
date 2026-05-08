@@ -36,7 +36,7 @@ docker run -d \
     -v /opt/omni3d/config:/app/config \
     --add-host host-gateway:host-gateway \
     --group-add $DSF_GID \
-    -p 5002:5002 \
+    -P \
     "$IMAGE:$TAG"
 
 echo "── Container started ──"

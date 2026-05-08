@@ -33,15 +33,11 @@ def find_services(workspace):
         src = os.path.join(path, "src")
         if not os.path.isdir(src):
             continue
-        # find entry point — first .py file that's not __init__.py
-        py_files = [
-            f for f in os.listdir(src)
-            if f.endswith(".py") and f != "__init__.py"
-            and not f.startswith("__")
-        ]
-        if not py_files:
+        # entry point must be main.py
+        if not os.path.exists(os.path.join(src, "main.py")):
+            print(f"── Skipping {d} — no main.py found in src/ ──")
             continue
-        entry = py_files[0]
+        entry = "main.py"
         binary = entry.replace(".py", "")
         services.append({
             "dir":    d,
@@ -87,7 +83,7 @@ def generate_dockerfile(services):
             f"    --collect-all omnode \\",
             f"    --collect-all fastapi \\",
             f"    --collect-all uvicorn \\",
-            f"    && mv /build/dist/{svc['binary']} /app/{svc['binary']}",
+            f"    && mv /build/dist/main /app/{svc['dir']}",
             "",
         ]
 
@@ -129,20 +125,13 @@ def generate_supervisord(services):
 
     for svc in services:
         lines += [
-            f"[program:{svc['binary']}]",
-            f"command=/app/{svc['binary']}/{svc['binary']}",
-            f"directory=/app/{svc['binary']}",
-            "autostart=true",
-            "autorestart=true",
-            "startretries=10",
-            "startsecs=5",
-            f"stdout_logfile=/var/log/{svc['binary']}.log",
-            "stdout_logfile_maxbytes=5MB",
-            "stdout_logfile_backups=2",
-            f"stderr_logfile=/var/log/{svc['binary']}.err",
-            "stderr_logfile_maxbytes=5MB",
-            "stderr_logfile_backups=2",
-            'environment=HOME="/root"',
+            f"COPY {svc['dir']}/src/ /build/{svc['dir']}/",
+            f"RUN pyinstaller /build/{svc['dir']}/{svc['entry']} --onedir -y \\",
+            f"    --name {svc['dir']} \\",
+            f"    --distpath /app \\",
+            f"    --collect-all omnode \\",
+            f"    --collect-all fastapi \\",
+            f"    --collect-all uvicorn",
             "",
         ]
 

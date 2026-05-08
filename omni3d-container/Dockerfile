@@ -23,35 +23,40 @@ RUN mkdir -p /app
 WORKDIR /build
 
 COPY OMNI3D_MMS/src/ /build/OMNI3D_MMS/
-RUN pyinstaller /build/OMNI3D_MMS/mms.py --onedir -y \
+RUN pyinstaller /build/OMNI3D_MMS/main.py --onedir -y \
     --collect-all omnode \
     --collect-all fastapi \
     --collect-all uvicorn \
-    && mv /build/dist/mms /app/mms
+    && mv /build/dist/main /app/OMNI3D_MMS
 
 COPY OMNI3D_RFID_Middleware/src/ /build/OMNI3D_RFID_Middleware/
-RUN pyinstaller /build/OMNI3D_RFID_Middleware/database.py --onedir -y \
+RUN pyinstaller /build/OMNI3D_RFID_Middleware/main.py --onedir -y \
     --collect-all omnode \
     --collect-all fastapi \
     --collect-all uvicorn \
-    && mv /build/dist/database /app/database
+    && mv /build/dist/main /app/OMNI3D_RFID_Middleware
 
 COPY OMNI3D_Template/src/ /build/OMNI3D_Template/
-RUN pyinstaller /build/OMNI3D_Template/template.py --onedir -y \
+RUN pyinstaller /build/OMNI3D_Template/main.py --onedir -y \
     --collect-all omnode \
     --collect-all fastapi \
     --collect-all uvicorn \
-    && mv /build/dist/template /app/template
+    && mv /build/dist/main /app/OMNI3D_Template
 
 COPY OMNI3D_Work_Time_Counter/src/ /build/OMNI3D_Work_Time_Counter/
-RUN pyinstaller /build/OMNI3D_Work_Time_Counter/WorkTimeCounter.py --onedir -y \
+RUN pyinstaller /build/OMNI3D_Work_Time_Counter/main.py --onedir -y \
     --collect-all omnode \
     --collect-all fastapi \
     --collect-all uvicorn \
-    && mv /build/dist/WorkTimeCounter /app/WorkTimeCounter
+    && mv /build/dist/main /app/OMNI3D_Work_Time_Counter
 
 # ── supervisord config ───────────────────────────────────────────────
 COPY omni3d-container/supervisord.conf /etc/supervisor/conf.d/omni3d.conf
+
+EXPOSE 5000-5005
+
+# ── expose ports ───────────────────────────────────────────────────────
+EXPOSE 5000-5005
 
 WORKDIR /app
 CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/conf.d/omni3d.conf"]

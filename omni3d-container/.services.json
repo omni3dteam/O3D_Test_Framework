@@ -1,0 +1,22 @@
+[
+  {
+    "dir": "OMNI3D_MMS",
+    "entry": "main.py",
+    "binary": "main"
+  },
+  {
+    "dir": "OMNI3D_RFID_Middleware",
+    "entry": "main.py",
+    "binary": "main"
+  },
+  {
+    "dir": "OMNI3D_Template",
+    "entry": "main.py",
+    "binary": "main"
+  },
+  {
+    "dir": "OMNI3D_Work_Time_Counter",
+    "entry": "main.py",
+    "binary": "main"
+  }
+]

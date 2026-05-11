@@ -125,13 +125,20 @@ def generate_supervisord(services):
 
     for svc in services:
         lines += [
-            f"COPY {svc['dir']}/src/ /build/{svc['dir']}/",
-            f"RUN pyinstaller /build/{svc['dir']}/{svc['entry']} --onedir -y \\",
-            f"    --name {svc['dir']} \\",
-            f"    --distpath /app \\",
-            f"    --collect-all omnode \\",
-            f"    --collect-all fastapi \\",
-            f"    --collect-all uvicorn",
+            f"[program:{svc['dir']}]",
+            f"command=/app/{svc['dir']}/main",
+            f"directory=/app/{svc['dir']}",
+            "autostart=true",
+            "autorestart=true",
+            "startretries=10",
+            "startsecs=5",
+            f"stdout_logfile=/var/log/{svc['dir']}.log",
+            "stdout_logfile_maxbytes=5MB",
+            "stdout_logfile_backups=2",
+            f"stderr_logfile=/var/log/{svc['dir']}.err",
+            "stderr_logfile_maxbytes=5MB",
+            "stderr_logfile_backups=2",
+            'environment=HOME="/root"',
             "",
         ]
 

@@ -79,10 +79,8 @@ def generate_dockerfile(services):
     for svc in services:
         lines += [
             f"COPY {svc['dir']}/src/ /build/{svc['dir']}/",
-            f"RUN pyinstaller /build/{svc['dir']}/{svc['entry']} --onedir -y \\",
-            f"    --collect-all omnode \\",
-            f"    --collect-all fastapi \\",
-            f"    --collect-all uvicorn \\",
+            f"RUN COLLECT=$(grep -v '^#' /tmp/requirements.txt | grep -v '^$' | cut -d= -f1 | sed 's/.*/ --collect-all &/' | tr -d '\\n') && \\",
+            f"    pyinstaller /build/{svc['dir']}/{svc['entry']} --onedir -y $COLLECT \\",
             f"    && mv /build/dist/main /app/{svc['dir']}",
             "",
         ]

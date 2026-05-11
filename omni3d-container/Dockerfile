@@ -23,31 +23,23 @@ RUN mkdir -p /app
 WORKDIR /build
 
 COPY OMNI3D_MMS/src/ /build/OMNI3D_MMS/
-RUN pyinstaller /build/OMNI3D_MMS/main.py --onedir -y \
-    --collect-all omnode \
-    --collect-all fastapi \
-    --collect-all uvicorn \
+RUN COLLECT=$(grep -v '^#' /tmp/requirements.txt | grep -v '^$' | cut -d= -f1 | sed 's/.*/ --collect-all &/' | tr -d '\n') && \
+    pyinstaller /build/OMNI3D_MMS/main.py --onedir -y $COLLECT \
     && mv /build/dist/main /app/OMNI3D_MMS
 
 COPY OMNI3D_RFID_Middleware/src/ /build/OMNI3D_RFID_Middleware/
-RUN pyinstaller /build/OMNI3D_RFID_Middleware/main.py --onedir -y \
-    --collect-all omnode \
-    --collect-all fastapi \
-    --collect-all uvicorn \
+RUN COLLECT=$(grep -v '^#' /tmp/requirements.txt | grep -v '^$' | cut -d= -f1 | sed 's/.*/ --collect-all &/' | tr -d '\n') && \
+    pyinstaller /build/OMNI3D_RFID_Middleware/main.py --onedir -y $COLLECT \
     && mv /build/dist/main /app/OMNI3D_RFID_Middleware
 
 COPY OMNI3D_Template/src/ /build/OMNI3D_Template/
-RUN pyinstaller /build/OMNI3D_Template/main.py --onedir -y \
-    --collect-all omnode \
-    --collect-all fastapi \
-    --collect-all uvicorn \
+RUN COLLECT=$(grep -v '^#' /tmp/requirements.txt | grep -v '^$' | cut -d= -f1 | sed 's/.*/ --collect-all &/' | tr -d '\n') && \
+    pyinstaller /build/OMNI3D_Template/main.py --onedir -y $COLLECT \
     && mv /build/dist/main /app/OMNI3D_Template
 
 COPY OMNI3D_Work_Time_Counter/src/ /build/OMNI3D_Work_Time_Counter/
-RUN pyinstaller /build/OMNI3D_Work_Time_Counter/main.py --onedir -y \
-    --collect-all omnode \
-    --collect-all fastapi \
-    --collect-all uvicorn \
+RUN COLLECT=$(grep -v '^#' /tmp/requirements.txt | grep -v '^$' | cut -d= -f1 | sed 's/.*/ --collect-all &/' | tr -d '\n') && \
+    pyinstaller /build/OMNI3D_Work_Time_Counter/main.py --onedir -y $COLLECT \
     && mv /build/dist/main /app/OMNI3D_Work_Time_Counter
 
 # ── supervisord config ───────────────────────────────────────────────

@@ -6,3 +6,4 @@ uvicorn
 cryptography
 fnvhash
 pyfu_usb
+serial

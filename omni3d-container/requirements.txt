@@ -5,3 +5,4 @@ fastapi
 uvicorn
 cryptography
 fnvhash
+pyfu_usb

@@ -7,3 +7,4 @@ cryptography
 fnvhash
 pyfu_usb
 serial
+apt

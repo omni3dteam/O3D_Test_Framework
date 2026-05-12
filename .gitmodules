@@ -19,3 +19,6 @@
 [submodule "OMNI3D_RFID_Middleware"]
 	path = OMNI3D_RFID_Middleware
 	url = git@github.com:omni3dteam/OMNI3D_RFID_Middleware.git
+[submodule "OMNI3D_Update"]
+	path = OMNI3D_Update
+	url = git@github.com:omni3dteam/OMNI3D_Update.git

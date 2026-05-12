@@ -37,6 +37,11 @@ RUN COLLECT=$(grep -v '^#' /tmp/requirements.txt | grep -v '^$' | cut -d= -f1 | 
     pyinstaller /build/OMNI3D_Template/main.py --onedir -y $COLLECT \
     && mv /build/dist/main /app/OMNI3D_Template
 
+COPY OMNI3D_Update/src/ /build/OMNI3D_Update/
+RUN COLLECT=$(grep -v '^#' /tmp/requirements.txt | grep -v '^$' | cut -d= -f1 | sed 's/.*/ --collect-all &/' | tr -d '\n') && \
+    pyinstaller /build/OMNI3D_Update/main.py --onedir -y $COLLECT \
+    && mv /build/dist/main /app/OMNI3D_Update
+
 COPY OMNI3D_Work_Time_Counter/src/ /build/OMNI3D_Work_Time_Counter/
 RUN COLLECT=$(grep -v '^#' /tmp/requirements.txt | grep -v '^$' | cut -d= -f1 | sed 's/.*/ --collect-all &/' | tr -d '\n') && \
     pyinstaller /build/OMNI3D_Work_Time_Counter/main.py --onedir -y $COLLECT \

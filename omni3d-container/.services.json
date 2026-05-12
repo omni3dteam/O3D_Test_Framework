@@ -15,6 +15,11 @@
     "binary": "main"
   },
   {
+    "dir": "OMNI3D_Update",
+    "entry": "main.py",
+    "binary": "main"
+  },
+  {
     "dir": "OMNI3D_Work_Time_Counter",
     "entry": "main.py",
     "binary": "main"

@@ -61,6 +61,7 @@ def generate_dockerfile(services):
         "    supervisor \\",
         "    libz-dev \\",
         "    git \\",
+        "    python3-apt \\",
         "    && rm -rf /var/lib/apt/lists/*",
         "",
         "# ── build and install omnode ─────────────────────────────────────────",

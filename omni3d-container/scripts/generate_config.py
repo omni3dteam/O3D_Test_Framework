@@ -82,6 +82,8 @@ def generate_dockerfile(services):
             f"COPY {svc['dir']}/src/ /build/{svc['dir']}/",
             f"RUN COLLECT=$(grep -v '^#' /tmp/requirements.txt | grep -v '^$' | cut -d= -f1 | sed 's/.*/ --collect-all &/' | tr -d '\\n') && \\",
             f"    pyinstaller /build/{svc['dir']}/{svc['entry']} --onedir -y $COLLECT \\",
+            f"    --hidden-import apt \\",
+            f"    --hidden-import apt_pkg \\",
             f"    && mv /build/dist/main /app/{svc['dir']}",
             "",
         ]

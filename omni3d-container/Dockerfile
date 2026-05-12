@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     supervisor \
     libz-dev \
     git \
+    python3-apt \
     && rm -rf /var/lib/apt/lists/*
 
 # ── build and install omnode ─────────────────────────────────────────
@@ -25,26 +26,36 @@ WORKDIR /build
 COPY OMNI3D_MMS/src/ /build/OMNI3D_MMS/
 RUN COLLECT=$(grep -v '^#' /tmp/requirements.txt | grep -v '^$' | cut -d= -f1 | sed 's/.*/ --collect-all &/' | tr -d '\n') && \
     pyinstaller /build/OMNI3D_MMS/main.py --onedir -y $COLLECT \
+    --hidden-import apt \
+    --hidden-import apt_pkg \
     && mv /build/dist/main /app/OMNI3D_MMS
 
 COPY OMNI3D_RFID_Middleware/src/ /build/OMNI3D_RFID_Middleware/
 RUN COLLECT=$(grep -v '^#' /tmp/requirements.txt | grep -v '^$' | cut -d= -f1 | sed 's/.*/ --collect-all &/' | tr -d '\n') && \
     pyinstaller /build/OMNI3D_RFID_Middleware/main.py --onedir -y $COLLECT \
+    --hidden-import apt \
+    --hidden-import apt_pkg \
     && mv /build/dist/main /app/OMNI3D_RFID_Middleware
 
 COPY OMNI3D_Template/src/ /build/OMNI3D_Template/
 RUN COLLECT=$(grep -v '^#' /tmp/requirements.txt | grep -v '^$' | cut -d= -f1 | sed 's/.*/ --collect-all &/' | tr -d '\n') && \
     pyinstaller /build/OMNI3D_Template/main.py --onedir -y $COLLECT \
+    --hidden-import apt \
+    --hidden-import apt_pkg \
     && mv /build/dist/main /app/OMNI3D_Template
 
 COPY OMNI3D_Update/src/ /build/OMNI3D_Update/
 RUN COLLECT=$(grep -v '^#' /tmp/requirements.txt | grep -v '^$' | cut -d= -f1 | sed 's/.*/ --collect-all &/' | tr -d '\n') && \
     pyinstaller /build/OMNI3D_Update/main.py --onedir -y $COLLECT \
+    --hidden-import apt \
+    --hidden-import apt_pkg \
     && mv /build/dist/main /app/OMNI3D_Update
 
 COPY OMNI3D_Work_Time_Counter/src/ /build/OMNI3D_Work_Time_Counter/
 RUN COLLECT=$(grep -v '^#' /tmp/requirements.txt | grep -v '^$' | cut -d= -f1 | sed 's/.*/ --collect-all &/' | tr -d '\n') && \
     pyinstaller /build/OMNI3D_Work_Time_Counter/main.py --onedir -y $COLLECT \
+    --hidden-import apt \
+    --hidden-import apt_pkg \
     && mv /build/dist/main /app/OMNI3D_Work_Time_Counter
 
 # ── supervisord config ───────────────────────────────────────────────

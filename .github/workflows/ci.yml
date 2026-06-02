@@ -249,13 +249,6 @@ jobs:
       # ── NOTE: test container stays running until await-approval completes ───
       # cleanup happens in the release job after approval
 
-      - name: Cleanup test container on success
-        if: success()
-        run: |
-          docker stop omni3d-main 2>/dev/null || true
-          docker rm   omni3d-main 2>/dev/null || true
-          docker rmi  "$TEST_IMAGE"  2>/dev/null || true
-
       - name: Keep container on failure
         if: failure()
         run: |

@@ -10,8 +10,6 @@ jobs:
   check-machine:
     if: github.event.client_payload.ref == 'refs/heads/dev'
     runs-on: [self-hosted, test-server]
-    outputs:
-      busy: ${{ steps.check.outputs.busy }}
     steps:
       - name: Check machine status
         id: check
@@ -29,7 +27,6 @@ jobs:
   # ────────────────────────────────────────────────────────────────────────────
   build-and-test:
     needs: check-machine
-    if: needs.check-machine.outputs.busy == 'false'
     runs-on: [self-hosted, test-server]
 
     outputs:
@@ -281,7 +278,7 @@ jobs:
 
   # ── manual approval gate ─────────────────────────────────────────────────
   await-approval:
-    needs: [check-machine, build-and-test]
+    needs: build-and-test
     if: needs.build-and-test.outputs.needs_approval == 'true'
     runs-on: [self-hosted, test-server]
     environment: manual-testing
@@ -291,7 +288,7 @@ jobs:
 
   # ── release ──────────────────────────────────────────────────────────────
   release:
-    needs: [check-machine, build-and-test, await-approval]
+    needs: [build-and-test, await-approval]
     if: always() && needs.build-and-test.result == 'success' && (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     runs-on: [self-hosted, test-server]
 

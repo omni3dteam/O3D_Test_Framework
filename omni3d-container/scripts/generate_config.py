@@ -91,8 +91,11 @@ def generate_dockerfile(services):
     lines += [
         "# ── machine config ──────────────────────────────────────────────────",
         "ARG CONFIG_DIR=OMNIPRO_Config",
+        "ARG FIRMWARE_DIR=RRF_Environment",
         "COPY ${CONFIG_DIR}/src/macros /app/config/macros",
         "COPY ${CONFIG_DIR}/src/sys    /app/config/sys",
+        "RUN mkdir -p /app/firmware",
+        "COPY ${FIRMWARE_DIR}/firmware/ /app/firmware/ 2>/dev/null || true",
         "",
         "# ── deploy config script ─────────────────────────────────────────────",
         "COPY omni3d-container/deploy_config.sh /app/deploy_config.sh",

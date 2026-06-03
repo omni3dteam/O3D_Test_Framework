@@ -38,7 +38,7 @@ else
 
     # query all connected boards from DSF
     echo "── Querying connected boards ──"
-    BOARDS=$(curl -s --max-time 10 http://localhost/machine/model \
+    BOARDS=$(curl -s --max-time 10 http://host-gateway/machine/model \
         | python3 -c "
 import sys, json
 try:
@@ -72,7 +72,7 @@ except Exception as e:
             fi
 
             echo "── Flashing $short_name (CAN: $can_addr) with $fw_file ──"
-            curl -s --max-time 10 -X POST http://localhost/machine/code \
+            curl -s --max-time 10 -X POST http://host-gateway/machine/code \
                 -H "Content-Type: text/plain" \
                 -d "M997 B${can_addr}" 2>/dev/null || true
             echo "── Flash triggered for $short_name ──"
@@ -90,7 +90,7 @@ except Exception as e:
             fi
 
             echo "── Flashing main board $short_name (CAN: 0) with $fw_file ──"
-            curl -s --max-time 10 -X POST http://localhost/machine/code \
+            curl -s --max-time 10 -X POST http://host-gateway/machine/code \
                 -H "Content-Type: text/plain" \
                 -d "M997 B0" 2>/dev/null || true
             echo "── Main board flash triggered ──"
@@ -100,7 +100,7 @@ except Exception as e:
         echo "── Waiting for boards to come back online ──"
         for i in $(seq 1 30); do
             sleep 3
-            STATUS=$(curl -s --max-time 5 http://localhost/machine/model \
+            STATUS=$(curl -s --max-time 5 http://host-gateway/machine/model \
                 | python3 -c "import sys,json; print(json.load(sys.stdin).get('state',{}).get('status','unknown'))" \
                 2>/dev/null || echo "unknown")
             if [ "$STATUS" != "unknown" ] && [ "$STATUS" != "updating" ]; then

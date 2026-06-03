@@ -45,7 +45,7 @@ jobs:
 
       - name: Clean stale submodule cache
         run: |
-          rm -rf /home/pro/O3D_Test_Framework/actions-runner/_work/O3D_Test_Framework/O3D_Test_Framework/.git/modules/OMNI3D_RFID_Middleware
+          rm -rf /home/pro/O3D_Test_Framework/actions-runner/_work/O3D_Test_Framework/O3D_Test_Framework/.git/modules/OMNI3D_RFID_Middleware/modules
           rm -rf /home/pro/O3D_Test_Framework/actions-runner/_work/O3D_Test_Framework/O3D_Test_Framework/.git/modules/OMNI3D_MMS/modules
 
       - name: Set image tag
@@ -60,7 +60,7 @@ jobs:
           if [ "$STATUS" = "processing" ]; then
             echo "::error title=Machine Busy::CI cancelled — machine is currently printing. Re-trigger the pipeline when the print is complete."
             echo "── Triggered by: $PUSHER pushing to $SUBMODULE ──"
-            exit 0
+            exit 1
           fi
           echo "✓ Machine is idle — proceeding"
 
@@ -143,7 +143,6 @@ jobs:
       - name: S4 — Deploy config
         run: |
           echo "── Deploying config ──"
-          if true; then
           ENV_FILE="/home/pro/O3D_Test_Framework/.env"
           source "$ENV_FILE"
           echo "── Machine: $MACHINE_MODEL ──"

@@ -22,3 +22,6 @@
 [submodule "OMNI3D_Update"]
 	path = OMNI3D_Update
 	url = git@github.com:omni3dteam/OMNI3D_Update.git
+[submodule "RRF_Environment"]
+	path = RRF_Environment
+	url = git@github.com:omni3dteam/RRF_Environment.git

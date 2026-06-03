@@ -28,12 +28,12 @@ echo "── Config deployed (no reboot) ──"
 # ── 2. deploy firmware ────────────────────────────────────────────────────────
 echo "── Step 2: Deploying firmware ──"
 
-if [ ! -d "$FIRMWARE_DIR" ] || [ -z "$(ls -A $FIRMWARE_DIR 2>/dev/null)" ]; then
+if [ ! -d "$FIRMWARE_DIR/bin" ] || [ -z "$(ls -A $FIRMWARE_DIR/bin 2>/dev/null)" ]; then
     echo "── No firmware found — skipping firmware update ──"
 else
     # copy all firmware files to DSF firmware directory
     mkdir -p "$DSF_SD/firmware"
-    cp -r "$FIRMWARE_DIR/"* "$DSF_SD/firmware/"
+    cp -r "$FIRMWARE_DIR/bin/"* "$DSF_SD/firmware/" 2>/dev/null || cp -r "$FIRMWARE_DIR/"*.bin "$DSF_SD/firmware/" 2>/dev/null || true
     echo "── Firmware files deployed to $DSF_SD/firmware/ ──"
 
     # query all connected boards from DSF
@@ -65,7 +65,7 @@ except Exception as e:
         echo "$BOARDS" | while IFS='|' read -r idx short_name fw_file can_addr; do
             [ "$can_addr" = "0" ] && continue  # skip main board
 
-            FW_PATH="$FIRMWARE_DIR/$fw_file"
+            FW_PATH="$FIRMWARE_DIR/bin/$fw_file"
             if [ ! -f "$FW_PATH" ]; then
                 echo "── Firmware $fw_file not found — skipping $short_name ──"
                 continue
@@ -83,7 +83,7 @@ except Exception as e:
         echo "$BOARDS" | while IFS='|' read -r idx short_name fw_file can_addr; do
             [ "$can_addr" != "0" ] && continue  # only main board
 
-            FW_PATH="$FIRMWARE_DIR/$fw_file"
+            FW_PATH="$FIRMWARE_DIR/bin/$fw_file"
             if [ ! -f "$FW_PATH" ]; then
                 echo "── Firmware $fw_file not found — skipping $short_name ──"
                 continue

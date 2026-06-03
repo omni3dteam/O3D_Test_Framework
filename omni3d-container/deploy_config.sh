@@ -24,3 +24,10 @@ if [ -d "$CONFIG_DIR/sys" ]; then
 fi
 
 echo "── Config deployment complete ──"
+
+# ── signal Duet board to reboot ───────────────────────────────────────────────
+echo "── Signalling Duet board to reboot ──"
+curl -s --max-time 10 -X POST http://localhost/machine/code \
+    -H "Content-Type: text/plain" \
+    -d "M999" 2>/dev/null || true
+echo "── Board reboot signal sent ──"

@@ -95,7 +95,7 @@ def generate_dockerfile(services):
         "COPY ${CONFIG_DIR}/src/macros /app/config/macros",
         "COPY ${CONFIG_DIR}/src/sys    /app/config/sys",
         "RUN mkdir -p /app/firmware",
-        "COPY ${FIRMWARE_DIR}/bin/ /app/firmware/\ ",
+        "COPY ${FIRMWARE_DIR}/bin/ /app/firmware/bin/",
         "# ── deploy config script ─────────────────────────────────────────────",
         "COPY omni3d-container/deploy_config.sh /app/deploy_config.sh",
         "RUN chmod +x /app/deploy_config.sh",

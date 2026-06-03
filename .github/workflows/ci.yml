@@ -60,7 +60,7 @@ jobs:
           if [ "$STATUS" = "processing" ]; then
             echo "::error title=Machine Busy::CI cancelled — machine is currently printing. Re-trigger the pipeline when the print is complete."
             echo "── Triggered by: $PUSHER pushing to $SUBMODULE ──"
-            exit 0
+            exit 1
           fi
           echo "✓ Machine is idle — proceeding"
 

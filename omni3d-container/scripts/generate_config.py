@@ -89,13 +89,8 @@ def generate_dockerfile(services):
         ]
 
     lines += [
-        "# ── machine config ──────────────────────────────────────────────────",
-        "ARG CONFIG_DIR=OMNIPRO_Config",
-        "ARG FIRMWARE_DIR=RRF_Environment",
-        "COPY ${CONFIG_DIR}/src/macros /app/config/macros",
-        "COPY ${CONFIG_DIR}/src/sys    /app/config/sys",
-        "RUN mkdir -p /app/firmware",
-        "COPY ${FIRMWARE_DIR}/bin/ /app/firmware/bin/",
+
+        "",
         "# ── deploy config script ─────────────────────────────────────────────",
         "COPY omni3d-container/deploy_config.sh /app/deploy_config.sh",
         "RUN chmod +x /app/deploy_config.sh",
@@ -109,7 +104,7 @@ def generate_dockerfile(services):
         "EXPOSE 5000-5005",
         "",
         "WORKDIR /app",
-        'CMD ["/bin/bash", "-c", "/app/deploy_config.sh && /usr/bin/supervisord -n -c /etc/supervisor/conf.d/omni3d.conf"]',
+        'CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/conf.d/omni3d.conf"]',
     ]
 
     return "\n".join(lines)

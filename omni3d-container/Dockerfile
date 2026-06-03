@@ -58,6 +58,18 @@ RUN COLLECT=$(grep -v '^#' /tmp/requirements.txt | grep -v '^$' | cut -d= -f1 | 
     --hidden-import apt_pkg \
     && mv /build/dist/main /app/OMNI3D_Work_Time_Counter
 
+# ── machine config ──────────────────────────────────────────────────
+ARG CONFIG_DIR=OMNIPRO_Config
+ARG FIRMWARE_DIR=RRF_Environment
+COPY ${CONFIG_DIR}/src/macros /app/config/macros
+COPY ${CONFIG_DIR}/src/sys    /app/config/sys
+RUN mkdir -p /app/firmware
+COPY ${FIRMWARE_DIR}/bin/ /app/firmware/ 2>/dev/null || true
+
+# ── deploy config script ─────────────────────────────────────────────
+COPY omni3d-container/deploy_config.sh /app/deploy_config.sh
+RUN chmod +x /app/deploy_config.sh
+
 # ── supervisord config ───────────────────────────────────────────────
 COPY omni3d-container/supervisord.conf /etc/supervisor/conf.d/omni3d.conf
 
@@ -67,4 +79,4 @@ EXPOSE 5000-5005
 EXPOSE 5000-5005
 
 WORKDIR /app
-CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/conf.d/omni3d.conf"]
+CMD ["/bin/bash", "-c", "/app/deploy_config.sh && /usr/bin/supervisord -n -c /etc/supervisor/conf.d/omni3d.conf"]

@@ -45,7 +45,7 @@ jobs:
 
       - name: Clean stale submodule cache
         run: |
-          rm -rf /home/pro/O3D_Test_Framework/actions-runner/_work/O3D_Test_Framework/O3D_Test_Framework/.git/modules/OMNI3D_RFID_Middleware/modules
+          rm -rf /home/pro/O3D_Test_Framework/actions-runner/_work/O3D_Test_Framework/O3D_Test_Framework/.git/modules/OMNI3D_RFID_Middleware
           rm -rf /home/pro/O3D_Test_Framework/actions-runner/_work/O3D_Test_Framework/O3D_Test_Framework/.git/modules/OMNI3D_MMS/modules
 
       - name: Set image tag

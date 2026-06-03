@@ -340,8 +340,19 @@ jobs:
 
       - name: R1 — Build release Docker image
         run: |
+          source /home/pro/O3D_Test_Framework/.env
+          if [ "$MACHINE_MODEL" = "OMNIPRO" ]; then
+            CONFIG_DIR="OMNIPRO_Config"
+          elif [ "$MACHINE_MODEL" = "OMNITECH" ]; then
+            CONFIG_DIR="OMNITECH_Config"
+          else
+            CONFIG_DIR="OMNIPRO_Config"
+          fi
+          echo "── Building release image with config: $CONFIG_DIR ──"
           docker build \
             -f omni3d-container/Dockerfile \
+            --build-arg CONFIG_DIR="$CONFIG_DIR" \
+            --build-arg FIRMWARE_DIR="RRF_Environment" \
             -t "$RELEASE_IMAGE" \
             .
 

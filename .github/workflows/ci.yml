@@ -142,13 +142,11 @@ jobs:
           echo "── Firmware deployment not yet implemented ──"
           exit 0
 
-      # ── S4: deploy config (only when config repo changed) ──────────────────
+      # ── S4: deploy config (always) ─────────────────────────────────────────
       - name: S4 — Deploy config
         run: |
-          if [[ "$SUBMODULE" != *"_Config" ]]; then
-            echo "── $SUBMODULE is not a config repo — skipping config deploy ──"
-            exit 0
-          fi
+          echo "── Deploying config ──"
+          if true; then
           ENV_FILE="/home/pro/O3D_Test_Framework/.env"
           source "$ENV_FILE"
           echo "── Machine: $MACHINE_MODEL ──"
@@ -181,10 +179,7 @@ jobs:
       # ── S5: restart board (only if config changed) ─────────────────────────
       - name: S5 — Restart board
         run: |
-          if [[ "$SUBMODULE" != *"_Config" ]] && [[ "$SUBMODULE" != "RRF_Environment" ]]; then
-            echo "── Neither config nor firmware changed — skipping board restart ──"
-            exit 0
-          fi
+          echo "── Config deployed — board restart needed ──"
           echo "── WARNING: Board restart via M999 is disabled until safe command is confirmed ──"
           echo "── Skipping board restart — please restart manually if needed ──"
           # TODO: replace M999 with correct restart command for omni firmware
@@ -196,10 +191,7 @@ jobs:
       # ── S6: verify board online (only if config changed) ────────────────────
       - name: S6 — Verify board online
         run: |
-          if [[ "$SUBMODULE" != *"_Config" ]] && [[ "$SUBMODULE" != "RRF_Environment" ]]; then
-            echo "── Board not restarted — skipping check ──"
-            exit 0
-          fi
+          echo "── Checking board online ──"
           echo "── Board restart disabled — skipping online check ──"
 
       # ── S7: start test container via bootloader ─────────────────────────────

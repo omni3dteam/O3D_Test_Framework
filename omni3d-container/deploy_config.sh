@@ -1,27 +1,37 @@
 #!/bin/bash
 # deploy_config.sh
 # Runs before supervisord on container startup.
-# Sequence:
-#   1. Deploy config (no reboot)
-#   2. Deploy firmware to each board — expansion boards first, main board last
-#   3. Exit — supervisord starts services
+# Deploys config and firmware ONLY on first start (when flag file doesn't exist).
+# Subsequent starts skip deployment.
 
+FLAG_FILE="/opt/omni3d/.deployed"
 DSF_SD="/opt/dsf/sd"
 CONFIG_MACROS="/app/config/macros"
 CONFIG_SYS="/app/config/sys"
 FIRMWARE_DIR="/app/firmware/bin"
+
+# ── check if already deployed ─────────────────────────────────────────────────
+if [ -f "$FLAG_FILE" ]; then
+    echo "── Already deployed — skipping config and firmware deployment ──"
+    echo "── Starting services ──"
+    exit 0
+fi
+
+echo "── First start — deploying config and firmware ──"
 
 # ── 1. deploy config ──────────────────────────────────────────────────────────
 echo "── Step 1: Deploying config ──"
 
 DEPLOYED=0
 if [ -d "$CONFIG_MACROS" ] && [ "$(ls -A $CONFIG_MACROS 2>/dev/null)" ]; then
+    rm -rf "$DSF_SD/macros"
     cp -r "$CONFIG_MACROS" "$DSF_SD/"
     echo "── macros deployed ──"
     DEPLOYED=1
 fi
 
 if [ -d "$CONFIG_SYS" ] && [ "$(ls -A $CONFIG_SYS 2>/dev/null)" ]; then
+    rm -rf "$DSF_SD/sys"
     cp -r "$CONFIG_SYS" "$DSF_SD/"
     echo "── sys deployed ──"
     DEPLOYED=1
@@ -30,7 +40,7 @@ fi
 if [ "$DEPLOYED" = "0" ]; then
     echo "── No config found — skipping ──"
 else
-    echo "── Config deployed (no reboot) ──"
+    echo "── Config deployed ──"
 fi
 
 # ── 2. deploy firmware ────────────────────────────────────────────────────────
@@ -41,7 +51,7 @@ if [ ! -d "$FIRMWARE_DIR" ] || [ -z "$(ls -A $FIRMWARE_DIR 2>/dev/null)" ]; then
 else
     mkdir -p "$DSF_SD/firmware"
     cp -r "$FIRMWARE_DIR/"* "$DSF_SD/firmware/"
-    echo "── Firmware files deployed to $DSF_SD/firmware/ ──"
+    echo "── Firmware files deployed ──"
 
     echo "── Querying connected boards ──"
     BOARDS=$(curl -s --max-time 10 http://host-gateway/machine/model \
@@ -105,5 +115,10 @@ except Exception as e:
     fi
 fi
 
-# ── 3. services start via supervisord ─────────────────────────────────────────
+# ── write flag file to prevent re-deployment on next start ───────────────────
+mkdir -p /opt/omni3d
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$FLAG_FILE"
+echo "── Deployment complete — flag written to $FLAG_FILE ──"
+
+# ── 3. start services ─────────────────────────────────────────────────────────
 echo "── Step 3: Starting services ──"

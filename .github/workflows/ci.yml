@@ -25,21 +25,17 @@ jobs:
           fi
 
   # ────────────────────────────────────────────────────────────────────────────
-  build-and-test:
+  build:
     needs: check-machine
     runs-on: [self-hosted, test-server]
 
     outputs:
-      needs_approval: ${{ steps.email.outputs.needs_approval }}
+      test_image: ${{ steps.set_image.outputs.test_image }}
 
     env:
-      SUBMODULE:      ${{ github.event.client_payload.submodule }}
-      SHA:            ${{ github.event.client_payload.sha }}
-      PUSHER:         ${{ github.event.client_payload.pusher }}
-      TEST_IMAGE:     omni3d-stack:ci-test
-      TEST_CONTAINER: omni3d-main
-      DSF_DIR:        /opt/dsf
-      BACKUP_DIR:     /opt/dsf.backup
+      SUBMODULE: ${{ github.event.client_payload.submodule }}
+      SHA:       ${{ github.event.client_payload.sha }}
+      PUSHER:    ${{ github.event.client_payload.pusher }}
 
     steps:
 
@@ -49,7 +45,11 @@ jobs:
           rm -rf /home/pro/O3D_Test_Framework/actions-runner/_work/O3D_Test_Framework/O3D_Test_Framework/.git/modules/OMNI3D_MMS/modules
 
       - name: Set image tag
-        run: echo "TEST_IMAGE=omni3d-stack:ci-test-$(date +%Y%m%d-%H%M%S)" >> $GITHUB_ENV
+        id: set_image
+        run: |
+          TAG="omni3d-stack:ci-test-$(date +%Y%m%d-%H%M%S)"
+          echo "TEST_IMAGE=$TAG" >> $GITHUB_ENV
+          echo "test_image=$TAG" >> $GITHUB_OUTPUT
 
       # ── S0: check machine is not printing ────────────────────────────────────
       - name: S0 — Check machine is not printing
@@ -135,6 +135,31 @@ jobs:
             -t "$TEST_IMAGE" \
             .
           echo "── Build complete ──"
+
+  test:
+    needs: build
+    runs-on: [self-hosted, test-server]
+
+    outputs:
+      needs_approval: ${{ steps.email.outputs.needs_approval }}
+
+    env:
+      SUBMODULE:      ${{ github.event.client_payload.submodule }}
+      SHA:            ${{ github.event.client_payload.sha }}
+      PUSHER:         ${{ github.event.client_payload.pusher }}
+      TEST_IMAGE:     ${{ needs.build.outputs.test_image }}
+      TEST_CONTAINER: omni3d-main
+      DSF_DIR:        /opt/dsf
+      BACKUP_DIR:     /opt/dsf.backup
+
+    steps:
+
+      - name: Checkout for test
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          token: ${{ secrets.OMNI3D_CI }}
 
       # ── S4: deploy firmware (only when RRF_Environment changed) ─────────────
       - name: S4 — Deploy firmware
@@ -227,13 +252,6 @@ jobs:
           fi
           echo "── All services RUNNING ──"
 
-      # ── S8.5: promote ci-test to dev-release ────────────────────────────────
-      - name: S8.5 — Tag ci-test as dev-release
-        run: |
-          DATE_TAG=$(date +%Y%m%d-%H%M%S)
-          docker tag "$TEST_IMAGE" "omni3d-stack:dev-release-${DATE_TAG}"
-          echo "── $TEST_IMAGE promoted to omni3d-stack:dev-release-${DATE_TAG} ──"
-
       # ── S9: email tester ────────────────────────────────────────────────────
       # stack is running at this point — tester can test immediately
       - name: S9 — Email tester
@@ -293,7 +311,7 @@ jobs:
 
   # ── manual approval gate ─────────────────────────────────────────────────
   await-approval:
-    needs: build-and-test
+    needs: [build, test]
     if: needs.build-and-test.outputs.needs_approval == 'true'
     runs-on: [self-hosted, test-server]
     environment: manual-testing
@@ -303,8 +321,8 @@ jobs:
 
   # ── release ──────────────────────────────────────────────────────────────
   release:
-    needs: [build-and-test, await-approval]
-    if: always() && needs.build-and-test.result == 'success' && (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
+    needs: [build, test, await-approval]
+    if: always() && needs.test.result == 'success' && (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     runs-on: [self-hosted, test-server]
 
     env:
@@ -313,6 +331,17 @@ jobs:
       RELEASE_IMAGE: omni3d-stack:release
 
     steps:
+
+      - name: Tag ci-test as dev-release
+        run: |
+          TEST_IMAGE="${{ needs.build.outputs.test_image }}"
+          DATE_TAG=$(date +%Y%m%d-%H%M%S)
+          docker tag "$TEST_IMAGE" "omni3d-stack:dev-release-${DATE_TAG}"
+          echo "── $TEST_IMAGE promoted to omni3d-stack:dev-release-${DATE_TAG} ──"
+          # clean old dev-release images keeping 2 most recent
+          docker images "omni3d-stack" --format "{{.Tag}}\t{{.CreatedAt}}" | grep "dev-release" | \
+            sort -k2 -r | tail -n +3 | awk '{print $1}' | \
+            xargs -I{} docker rmi "omni3d-stack:{}" 2>/dev/null || true
 
       - name: Checkout O3D_Test_Framework + submodules
         uses: actions/checkout@v4

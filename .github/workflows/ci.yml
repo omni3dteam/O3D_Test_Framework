@@ -60,7 +60,7 @@ jobs:
           if [ "$STATUS" = "processing" ]; then
             echo "::error title=Machine Busy::CI cancelled — machine is currently printing. Re-trigger the pipeline when the print is complete."
             echo "── Triggered by: $PUSHER pushing to $SUBMODULE ──"
-            exit 0
+            exit 1
           fi
           echo "✓ Machine is idle — proceeding"
 
@@ -250,7 +250,7 @@ jobs:
           CHECKLIST=$(grep -v "^tester:" "$CHECKLIST_FILE")
           APPROVAL_URL="https://github.com/omni3dteam/O3D_Test_Framework/actions/runs/${{ github.run_id }}"
           TESTER_EMAIL="$TESTER_EMAIL" CHECKLIST="$CHECKLIST" APPROVAL_URL="$APPROVAL_URL" \
-            python3 omni3d-container/scripts/send_email.py
+            python3 omni3d-container/scripts/send_email.py || echo "── Email failed — continuing anyway ──"
         env:
           GMAIL_USER:     ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASS: ${{ secrets.GMAIL_APP_PASS }}

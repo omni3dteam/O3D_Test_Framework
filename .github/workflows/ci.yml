@@ -365,12 +365,25 @@ jobs:
             CONFIG_DIR="OMNIPRO_Config"
           fi
           echo "── Building release image with config: $CONFIG_DIR ──"
+
+          # get the dev-release tag that was just built
+          DEV_RELEASE_TAG=$(docker images "omni3d-stack" --format "{{.Tag}}" | grep "dev-release" | sort -r | head -1)
+          echo "── Extending $DEV_RELEASE_TAG for release ──"
+
+          # build release image extending ci-test with config + firmware + deploy CMD
+          cat > /tmp/Dockerfile.release << RELEASE_EOF
+FROM omni3d-stack:$DEV_RELEASE_TAG
+COPY ${CONFIG_DIR}/src/macros/ /app/config/macros/
+COPY ${CONFIG_DIR}/src/sys/    /app/config/sys/
+COPY RRF_Environment/bin/      /app/firmware/bin/
+CMD ["/bin/bash", "-c", "/app/deploy_config.sh && /usr/bin/supervisord -n -c /etc/supervisor/conf.d/omni3d.conf"]
+RELEASE_EOF
+
           docker build \
-            -f omni3d-container/Dockerfile \
-            --build-arg CONFIG_DIR="$CONFIG_DIR" \
-            --build-arg FIRMWARE_DIR="RRF_Environment" \
+            -f /tmp/Dockerfile.release \
             -t "$RELEASE_IMAGE" \
             .
+          rm /tmp/Dockerfile.release
 
       - name: R2 — Build deb packages
         run: |

@@ -332,16 +332,11 @@ jobs:
 
     steps:
 
-      - name: Tag ci-test as dev-release
+      - name: Set dev-release tag
         run: |
-          TEST_IMAGE="${{ needs.build.outputs.test_image }}"
           DATE_TAG=$(date +%Y%m%d-%H%M%S)
-          docker tag "$TEST_IMAGE" "omni3d-stack:dev-release-${DATE_TAG}"
-          echo "── $TEST_IMAGE promoted to omni3d-stack:dev-release-${DATE_TAG} ──"
-          # clean old dev-release images keeping 2 most recent
-          docker images "omni3d-stack" --format "{{.Tag}}\t{{.CreatedAt}}" | grep "dev-release" | \
-            sort -k2 -r | tail -n +3 | awk '{print $1}' | \
-            xargs -I{} docker rmi "omni3d-stack:{}" 2>/dev/null || true
+          echo "DEV_RELEASE_TAG=dev-release-${DATE_TAG}" >> $GITHUB_ENV
+          echo "── Release will be tagged as dev-release-${DATE_TAG} ──"
 
       - name: Checkout O3D_Test_Framework + submodules
         uses: actions/checkout@v4
@@ -395,7 +390,7 @@ jobs:
           fi
           echo "── Building release image with config: $CONFIG_DIR ──"
           chmod +x omni3d-container/scripts/build_release.sh
-          omni3d-container/scripts/build_release.sh "$CONFIG_DIR" "$RELEASE_IMAGE"
+          omni3d-container/scripts/build_release.sh "$CONFIG_DIR" "omni3d-stack:$DEV_RELEASE_TAG"
 
       - name: R2 — Build deb packages
         run: |
@@ -418,10 +413,9 @@ jobs:
       - name: R3 — Export Docker image
         run: |
           mkdir -p "$RELEASE_DIR"
-          docker tag "$RELEASE_IMAGE" "omni3d-stack:$NEW_VERSION"
-          docker tag "$RELEASE_IMAGE" "omni3d-stack:latest"
-          TAR_FILE="$RELEASE_DIR/omni3d-stack_${NEW_VERSION}.tar.gz"
-          docker save "omni3d-stack:$NEW_VERSION" | gzip > "$TAR_FILE"
+          TAR_FILE="$RELEASE_DIR/${DEV_RELEASE_TAG}.tar.gz"
+          docker save "omni3d-stack:$DEV_RELEASE_TAG" | gzip > "$TAR_FILE"
+          echo "── Exported: $TAR_FILE ──"
           echo "── $(du -h $TAR_FILE | cut -f1) ──"
           ls -lh "$RELEASE_DIR"
 
@@ -468,4 +462,9 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: docker rmi "$RELEASE_IMAGE" 2>/dev/null || true
+        run: |
+          docker rmi "$RELEASE_IMAGE" 2>/dev/null || true
+          # clean old dev-release images keeping 2 most recent
+          docker images "omni3d-stack" --format "{{.Tag}}\t{{.CreatedAt}}" | grep "dev-release" | \
+            sort -k2 -r | tail -n +3 | awk '{print $1}' | \
+            xargs -I{} docker rmi "omni3d-stack:{}" 2>/dev/null || true

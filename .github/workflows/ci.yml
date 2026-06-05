@@ -312,7 +312,7 @@ jobs:
   # ── manual approval gate ─────────────────────────────────────────────────
   await-approval:
     needs: [build, test]
-    if: needs.build-and-test.outputs.needs_approval == 'true'
+    if: needs.test.outputs.needs_approval == 'true'
     runs-on: [self-hosted, test-server]
     environment: manual-testing
     steps:

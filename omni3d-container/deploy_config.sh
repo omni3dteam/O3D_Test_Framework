@@ -90,7 +90,7 @@ print(data.get('$fw_file', ''))
                 continue
             fi
 
-            echo "── $short_name: board=$fw_version container=$CONTAINER_VERSION ──"
+            echo "── $short_name (CAN: $can_addr): board fw=$fw_version container fw=$CONTAINER_VERSION ──"
             if [ "$fw_version" != "$CONTAINER_VERSION" ]; then
                 echo "── $short_name: version mismatch — will flash ──"
                 echo "flash" > /tmp/flash_${can_addr}
